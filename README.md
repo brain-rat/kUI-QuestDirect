@@ -2,6 +2,8 @@
 
 Add-ons for **World of Warcraft: Forever** (client 1.60, Interface 16001): a quest tracker that plans each zone, and a flat, dark UI overhaul with bags, tooltips and a rare scanner.
 
+**Project page:** https://brain-rat.github.io/kUI-QuestDirect/
+
 | Folder | What it is |
 |---|---|
 | [`QuestDirect`](QuestDirect/README.md) | Quest tracker you can drag and scale. Click a quest and the TomTom arrow points at its next stop. Suggests quests to pick up nearby, plans the zone (which quest givers to visit, what to hand in and pick up, which objectives to do, where to go next), and has buttons for usable quest items. |
