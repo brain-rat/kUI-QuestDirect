@@ -1,0 +1,228 @@
+<title>Forever Add-ons</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: the add-ons' own in-game look — dark slate panels, 1px blue-grey borders, one sky-blue accent.
+   A single narrow column of sections; each add-on is a flat panel with a small live mock of its UI. */
+:root {
+  --bg: #0b0d12;
+  --panel: #10141b;
+  --panel-2: #151a23;
+  --edge: #3a4352;
+  --edge-soft: #252c38;
+  --fg: #e8ebf0;
+  --muted: #9aa3b2;
+  --accent: #7fc8ff;
+  --gold: #ffd100;
+  --green: #1eff00;
+  --blue: #0070dd;
+  --purple: #a335ee;
+  --orange: #ff8000;
+  --display: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
+  --body: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font: 16px/1.6 var(--body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.wrap { max-width: 960px; margin: 0 auto; padding-block: 48px 64px; display: flex; flex-direction: column; gap: 56px; }
+a { color: var(--accent); text-underline-offset: 3px; }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; letter-spacing: 0.01em; }
+h1 { font-size: clamp(2.6rem, 7vw, 4rem); font-weight: 700; line-height: 1; }
+h2 { font-size: 1.75rem; font-weight: 600; }
+h3 { font-size: 1.35rem; font-weight: 600; }
+p { margin: 0; max-width: 65ch; }
+.eyebrow { font-family: var(--display); font-weight: 600; text-transform: uppercase; letter-spacing: 0.14em; font-size: 0.8rem; color: var(--accent); }
+.muted { color: var(--muted); }
+
+/* the in-game panel look */
+.panel { background: var(--panel); border: 1px solid var(--edge); }
+.strip { background: rgba(255,255,255,0.06); height: 26px; display: flex; align-items: center; justify-content: space-between; padding: 0 8px; font-family: var(--display); font-weight: 600; font-size: 0.95rem; }
+.strip .title { color: var(--accent); }
+.strip .btns { display: flex; gap: 10px; font-family: var(--body); font-weight: 500; font-size: 0.78rem; color: #dfe4ea; }
+
+/* QuestDirect mock */
+.tracker { min-width: 0; font-size: 0.86rem; }
+.tracker .zone { color: var(--accent); font-family: var(--display); font-weight: 600; padding: 8px 10px 2px; font-size: 0.95rem; }
+.tracker .row { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 6px; padding: 5px 10px; }
+.tracker .row.focus { background: rgba(127,200,255,0.10); box-shadow: inset 2px 0 0 var(--accent); }
+.tracker .n { color: var(--muted); font-family: var(--mono); font-size: 0.75rem; padding-top: 2px; }
+.tracker .q { min-width: 0; }
+.tracker .q .t { font-weight: 600; }
+.tracker .q .l { color: #c3c9d3; font-size: 0.8rem; }
+.tracker .d { color: var(--muted); font-family: var(--mono); font-size: 0.75rem; font-variant-numeric: tabular-nums; padding-top: 2px; }
+.gold { color: var(--gold); }
+.lvl-y { color: #ffd100; } .lvl-g { color: #40bf40; } .lvl-o { color: #ff8040; }
+
+/* add-on sections */
+.addons { display: flex; flex-direction: column; gap: 28px; }
+.addon { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 300px); gap: 0; }
+.addon-body { padding: 22px 24px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.addon-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.tag { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); border: 1px solid var(--edge-soft); padding: 1px 6px; }
+.addon ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; max-width: 65ch; }
+.addon li::marker { color: var(--accent); }
+.uses { border-top: 1px solid var(--edge-soft); padding-top: 12px; font-size: 0.92rem; color: #c9cfd9; }
+.uses b { color: var(--accent); font-weight: 600; }
+.addon-art { border-left: 1px solid var(--edge-soft); background: var(--panel-2); padding: 18px; display: flex; align-items: center; justify-content: center; min-width: 0; }
+
+.addon-art.stack { flex-direction: column; align-items: stretch; gap: 12px; }
+.addon-art.stack > .panel:last-child { align-self: center; }
+
+/* bag slots mock */
+.slots { display: grid; grid-template-columns: repeat(5, 40px); gap: 5px; }
+.slot { width: 40px; height: 40px; position: relative; background: rgba(255,255,255,0.04); border: 1px solid rgba(58,67,82,0.6); }
+.slot.item { background: linear-gradient(135deg, #3b3226, #1d1a17); }
+.slot.q2 { border-color: var(--green); box-shadow: inset 0 0 12px rgba(30,255,0,0.55); }
+.slot.q3 { border-color: var(--blue); box-shadow: inset 0 0 12px rgba(0,112,221,0.6); }
+.slot.q4 { border-color: var(--purple); box-shadow: inset 0 0 12px rgba(163,53,238,0.6); }
+.slot.q0 { border-color: #9d9d9d; box-shadow: inset 0 0 10px rgba(157,157,157,0.35); }
+.slot .c { position: absolute; right: 3px; bottom: 1px; font: 600 11px var(--body); color: #fff; text-shadow: 0 0 2px #000, 0 0 2px #000; }
+.bag-label { font-family: var(--display); font-weight: 600; color: #bfbfbf; font-size: 0.85rem; margin: 2px 0 6px; }
+
+/* table mock (unused) */
+.gtable { width: 100%; border-collapse: collapse; font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+.gtable th { text-align: left; color: #bfbfbf; font-weight: 500; padding: 4px 6px; border-bottom: 1px solid var(--edge); }
+.gtable th.on { color: var(--accent); }
+.gtable td { padding: 4px 6px; }
+.gtable tr:nth-child(even) td { background: rgba(255,255,255,0.03); }
+.r { text-align: right; }
+
+/* ForeverSync mock */
+.term { font: 0.74rem/1.55 var(--mono); color: #c9cfd9; white-space: pre; overflow-x: auto; max-width: 100%; }
+.term .ok { color: var(--accent); }
+
+/* data use */
+.data { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0; }
+.data > div { padding: 22px 24px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.data > div + div { border-left: 1px solid var(--edge-soft); }
+.data dl { margin: 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 14px; font-size: 0.92rem; }
+.data dt { font-family: var(--mono); font-size: 0.8rem; color: var(--accent); padding-top: 2px; }
+.data dd { margin: 0; color: #c9cfd9; }
+.credit { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--edge); background: var(--panel-2); padding: 6px 10px; font-size: 0.9rem; }
+.credit span { color: var(--muted); }
+
+@media (max-width: 760px) {
+  .addon, .data { grid-template-columns: minmax(0, 1fr); }
+  .addon-art { border-left: 0; border-top: 1px solid var(--edge-soft); }
+  .data > div + div { border-left: 0; border-top: 1px solid var(--edge-soft); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .row.focus { transition: background .2s; }
+}
+</style>
+
+<div class="wrap">
+
+
+  <section class="addons" aria-labelledby="h-addons">
+    <h2 id="h-addons">What's in it</h2>
+
+    <article class="panel addon">
+      <div class="addon-body">
+        <div class="addon-head"><h3>QuestDirect</h3><span class="tag">quest tracker</span></div>
+        <p>A drag-and-scale quest tracker. Click a quest and the TomTom arrow points at its next stop: the objective area, the turn-in, or the game's own travel step when it's in another zone.</p>
+        <ul>
+          <li>Suggests quests to pick up nearby, filtered by level, race, class and quest chains.</li>
+          <li>Plans the zone: which quest givers to visit in which order, what to hand in and pick up at each, which objectives to do, then where to head next.</li>
+          <li>Buttons for usable quest items, with a keybind.</li>
+        </ul>
+        <p class="uses"><b>ForeverDB use:</b> quest givers, turn-ins and their map positions, chains and level ranges, so suggestions and plans use what's actually in Forever, including Forever's new quests.</p>
+      </div>
+      <div class="addon-art stack" aria-hidden="true">
+        <div class="panel tracker" style="width:100%" aria-label="QuestDirect tracker, as it looks in game">
+          <div class="strip"><span class="title">QuestDirect</span><span class="btns"><span>Lock</span><span>Zone</span><span style="color:var(--accent)">Plan</span><span>–</span></span></div>
+          <div class="zone">– Plan · 5 stops</div>
+          <div class="row focus"><span class="n">1</span><div class="q"><div class="t">Gornek</div><div class="l"><span class="gold">Hand in</span>&nbsp; Cutting Teeth</div><div class="l"><span class="gold">Pick up</span>&nbsp; <span class="lvl-y">[3]</span> Sting of the Scorpid</div></div><span class="d">42 yd</span></div>
+          <div class="row"><span class="n">2</span><div class="q"><div class="t lvl-y">Do: Sarkoth</div><div class="l">Sarkoth's Mangled Claw: 0/1</div></div><span class="d">180 yd</span></div>
+          <div class="row"><span class="n">3</span><div class="q"><div class="t">Zureetha Fargaze</div><div class="l"><span class="gold">Hand in</span>&nbsp; Vile Familiars</div></div><span class="d">210 yd</span></div>
+          <div class="row"><span class="n">&gt;</span><div class="q"><div class="t" style="color:var(--accent)">Then head to Razor Hill</div><div class="l">Near Gar'Thok · 9 quests · level 5-9</div></div><span class="d">1.1k yd</span></div>
+        </div>
+        <div class="panel" style="padding:10px;display:flex;gap:6px;align-items:center">
+          <div class="slot item q2" style="background:linear-gradient(135deg,#2b3a2a,#141a14)"><span class="c">3</span></div>
+          <div class="slot item" style="background:linear-gradient(135deg,#3a2f22,#1a1612)"></div>
+          <span class="muted" style="font-size:.8rem;margin-left:6px">quest item bar</span>
+        </div>
+      </div>
+    </article>
+
+    <article class="panel addon">
+      <div class="addon-body">
+        <div class="addon-head"><h3>kUI</h3><span class="tag">UI overhaul</span></div>
+        <p>One flat, dark style for the game's own windows, with a shared font setting.</p>
+        <ul>
+          <li>Bags and bank with categories, every empty slot at the bottom, adjustable gaps, and a rarity outline and glow on each item.</li>
+          <li>Loot window, tooltips, and a square minimap.</li>
+          <li>Rare and treasure scanner: alerts, spawn points on the map, and spots you've looted before.</li>
+        </ul>
+        <p class="uses"><b>ForeverDB use:</b> what's new or changed in Forever, so the rare scanner and lists can tell Forever-only content from Classic, shown with its <i>Seen in WoW Forever</i> or <i>Classic data</i> label.</p>
+      </div>
+      <div class="addon-art" aria-hidden="true">
+        <div>
+          <div class="bag-label">Trade Goods &nbsp;<span class="muted">4</span></div>
+          <div class="slots">
+            <div class="slot item q2"><span class="c">1</span></div>
+            <div class="slot item q2"></div>
+            <div class="slot item"><span class="c">12</span></div>
+            <div class="slot item q4"></div>
+            <div class="slot item q0"><span class="c">2</span></div>
+            <div class="slot"></div><div class="slot"></div><div class="slot"></div><div class="slot"></div><div class="slot"></div>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <article class="panel addon">
+      <div class="addon-body">
+        <div class="addon-head"><h3>ForeverSync</h3><span class="tag">local data tool</span></div>
+        <p>A small Windows program that downloads ForeverDB data onto the player's own PC, where it's turned into data files for the add-ons above. Add-ons can't make web requests, so this is how the data reaches the game.</p>
+        <ul>
+          <li>Paced to stay under 60 requests a minute and 10,000 a day.</li>
+          <li>Resumes where it stopped and only fetches what's new on later runs.</li>
+          <li>The API key stays on the player's PC and is only sent to foreverdb.net.</li>
+        </ul>
+      </div>
+      <div class="addon-art" aria-hidden="true">
+        <div class="panel" style="padding:12px;width:100%">
+<div class="term">ForeverSync: WoW Forever data
+Quests
+  quest list: 300 of 4612
+  quests: 50/4612, ~76 min left
+<span class="ok">Done. Data from ForeverDB.net</span></div>
+        </div>
+      </div>
+    </article>
+  </section>
+
+  <section aria-labelledby="h-data" style="display:flex;flex-direction:column;gap:16px">
+    <h2 id="h-data">How ForeverDB data is used</h2>
+    <div class="panel data">
+      <div>
+        <div class="eyebrow">Endpoints</div>
+        <dl>
+          <dt>/quests</dt><dd>Givers, turn-ins, positions, chains, levels, side</dd>
+          <dt>/zones</dt><dd>Zone names and map IDs</dd>
+          <dt>/changes-seen</dt><dd>What differs from Classic in Forever</dd>
+          <dt>/meta</dt><dd>Game build and totals</dd>
+        </dl>
+      </div>
+      <div>
+        <div class="eyebrow">Terms we keep</div>
+        <p>Every place the add-ons show ForeverDB data carries a visible credit linking back, and each record keeps its <i>Seen in WoW Forever</i> or <i>Classic data</i> label.</p>
+        <span class="credit">Data from <a href="https://foreverdb.net" target="_blank" rel="noopener">ForeverDB.net</a> <span>· in tooltips, lists and read-mes</span></span>
+        <p class="muted">Personal, non-commercial use. The data is not resold, not republished as a mirror, and not presented as our own.</p>
+      </div>
+    </div>
+  </section>
+
+
+</div>

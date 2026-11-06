@@ -1,0 +1,7 @@
+<Bindings>
+  <Binding name="QUESTDIRECT_TOGGLE" header="QUESTDIRECT" category="ADDONS">QuestDirect.Tracker:Toggle()</Binding>
+  <Binding name="QUESTDIRECT_NEXT" category="ADDONS">QuestDirect.Nav:FocusNearest()</Binding>
+  <Binding name="QUESTDIRECT_CLEAR" category="ADDONS">QuestDirect.Nav:Clear(true)</Binding>
+  <Binding name="QUESTDIRECT_ROUTE" category="ADDONS">QuestDirect.Nav:ToggleRoute()</Binding>
+  <Binding name="CLICK QuestDirectItem1:LeftButton" category="ADDONS" />
+</Bindings>

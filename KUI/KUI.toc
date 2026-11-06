@@ -1,0 +1,16 @@
+## Interface: 16001
+## Title: |cff7fc8ffk|rUI
+## Notes: A flat, dark look for the game's UI to match QuestDirect. Bags, loot window, tooltips, rare and treasure scanner, junk selling and square minimap so far.
+## Version: 1.4.0
+## SavedVariables: KUIDB
+
+Style.lua
+Core.lua
+Loot.lua
+Minimap.lua
+Bags.lua
+RareData.lua
+Rares.lua
+Treasures.lua
+Tooltips.lua
+Junk.lua

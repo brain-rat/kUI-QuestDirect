@@ -1,0 +1,11 @@
+# ForeverSync: your API key and downloaded data stay on your PC
+key.txt
+ForeverSync/data/
+ForeverSync/dist/
+*.exe
+# build and editor leftovers
+dist/
+*.tmp
+.DS_Store
+Thumbs.db
+__pycache__/

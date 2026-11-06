@@ -1,0 +1,17 @@
+## Interface: 16001
+## Title: QuestDirect
+## Notes: Quest tracker you can drag and scale, with quests to pick up nearby and a plan for each zone. Navigates with TomTom.
+## Version: 1.3.0
+## OptionalDeps: TomTom
+## SavedVariables: QuestDirectDB
+## SavedVariablesPerCharacter: QuestDirectCharDB
+## IconTexture: Interface\Icons\INV_Misc_Map_01
+
+Core.lua
+QuestData.lua
+Quests.lua
+Offers.lua
+Nav.lua
+Plan.lua
+Tracker.lua
+Items.lua
