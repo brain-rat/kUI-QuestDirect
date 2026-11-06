@@ -5,7 +5,7 @@
 --
 -- A row is made from a definition and an `io` table:
 --   def = { kind = "step" | "cycle" | "toggle", label, key, ... }
---     step:   min, max, step, fmt            a slider (the mouse wheel steps it)
+--     step:   min, max, step, fmt            a slider (the mouse wheel steps it) and a box to type in
 --     cycle:  list = { { key, name } }       segmented buttons
 --             stepper = true                 < value > for long lists; list may be a function
 --     toggle:                                a switch
@@ -39,7 +39,9 @@ end
 
 local function RefreshSlider(r, v)
   r.slider:SetValue(v)
-  r.value:SetText(r.def.fmt and r.def.fmt:format(v) or tostring(v))
+  if not r.typing then -- never over what you're typing
+    r.value:SetText(r.def.fmt and r.def.fmt:format(v) or tostring(v))
+  end
 end
 
 local function RefreshSwitch(r, v)
@@ -79,13 +81,69 @@ end
 -- Building each kind
 ------------------------------------------------------------------------
 
-local function BuildSlider(r, def)
-  r.value = S.UIText(r, nil, "RIGHT", nil, 12)
-  r.value:SetPoint("RIGHT", -8, 0)
-  r.value:SetWidth(36)
+-- A typed value goes in as written, between the row's limits, rather than snapping to
+-- the slider's steps: whole numbers stay whole, decimals keep what the row can show.
+local function Typed(r, box)
+  local def = r.def
+  local v = tonumber((box:GetText():gsub(",", ".")))
+  if not v then return r:Refresh() end
+  v = max(def.min, min(def.max, v))
+  if def.fmt then
+    v = tonumber(def.fmt:format(v)) or v
+  elseif def.step == floor(def.step) then
+    v = floor(v + 0.5)
+  end
+  r:Set(v)
+end
+
+local function BuildValueBox(r)
+  local box = CreateFrame("EditBox", nil, r)
+  box:SetSize(44, 16)
+  box:SetPoint("RIGHT", -8, 0)
+  box:SetAutoFocus(false)
+  box:SetMaxLetters(8)
+  box:SetTextInsets(2, 4, 0, 0)
+  box:SetJustifyH("RIGHT")
+  S.FixFont(box, 12)
+  local bg = S.Tex(box, "BACKGROUND", -8)
+  bg:SetAllPoints()
+  bg:SetColorTexture(0, 0, 0, 0.3)
+  local edges = S.Edges(box, "BACKGROUND", -7)
+  S.ColorEdges(edges, S.SOFT[1], S.SOFT[2], S.SOFT[3], 1)
+  box:SetScript("OnEditFocusGained", function(self)
+    r.typing = true
+    S.ColorEdges(edges, A[1], A[2], A[3], 1)
+    self:HighlightText()
+  end)
+  box:SetScript("OnEditFocusLost", function(self)
+    S.ColorEdges(edges, S.SOFT[1], S.SOFT[2], S.SOFT[3], 1)
+    self:HighlightText(0, 0)
+    if r.typing then -- clicked away: keep it
+      r.typing = false
+      Typed(r, self)
+    end
+  end)
+  local function commit(self)
+    r.typing = false
+    Typed(r, self)
+    self:ClearFocus()
+  end
+  box:SetScript("OnEnterPressed", commit)
+  box:SetScript("OnTabPressed", commit)
+  box:SetScript("OnEscapePressed", function(self)
+    r.typing = false
+    r:Refresh()
+    self:ClearFocus()
+  end)
+  box:SetScript("OnHide", function(self) self:ClearFocus() end)
+  r.value = box
+end
+
+local function BuildSlider(r, def, width)
+  BuildValueBox(r)
   local sl = CreateFrame("Slider", nil, r)
   sl:SetOrientation("HORIZONTAL")
-  sl:SetSize(100, 16)
+  sl:SetSize(max(92, width - 190), 16) -- what a wider panel gives goes to the slider
   sl:SetPoint("RIGHT", r.value, "LEFT", -6, 0)
   sl:SetMinMaxValues(def.min, def.max)
   sl:SetValueStep(def.step)
@@ -218,7 +276,7 @@ function S.Row(parent, def, width, io)
   r.label:SetText(def.label)
   r.label:SetTextColor(0.85, 0.86, 0.88)
   if def.kind == "step" then
-    BuildSlider(r, def)
+    BuildSlider(r, def, width)
   elseif def.kind == "toggle" then
     BuildSwitch(r)
   elseif def.stepper then

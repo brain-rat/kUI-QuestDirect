@@ -106,14 +106,23 @@ local function HasText(v)
   return v ~= nil and v ~= ""
 end
 
+-- Some spells carry a note from the game's designers in their name, like the
+-- "Opening - No Text" you get from a water barrel. A secret can't be read, so it's
+-- passed on as it is.
+local function Clean(text)
+  if S.IsSecret(text) then return text end
+  local short = text:gsub("%s*%-%s*No Text$", "")
+  return short ~= "" and short or text
+end
+
 -- What to show on the bar. The game's display name comes first, as on its own bar:
 -- some casts, like opening a chest, may not have a usable plain name.
 local function CastText(display, name, spellID, channel)
-  if HasText(display) then return display end
-  if HasText(name) then return name end
+  if HasText(display) then return Clean(display) end
+  if HasText(name) then return Clean(name) end
   local id = S.Safe(spellID)
   local spell = id and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id)
-  if HasText(spell) then return spell end
+  if HasText(spell) then return Clean(spell) end
   return channel and "Channelling" or "Casting"
 end
 

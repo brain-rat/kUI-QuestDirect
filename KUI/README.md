@@ -2,7 +2,7 @@
 
 A flat, dark look for the game's own windows, matching QuestDirect. It's built as the base for a bigger UI overhaul: every part uses the same shared style (`Style.lua`), so more windows can be added and they'll all match.
 
-So far it covers the player and target frames, the castbar, your bags and bank, the loot window, tooltips, a rare and treasure scanner, junk selling and the minimap.
+So far it covers the player and target frames, the castbar, action bars, your bags and bank, the loot window, tooltips, a rare and treasure scanner, junk selling and the minimap.
 
 ## Player and target frames
 
@@ -26,9 +26,57 @@ Flat frames in the shared style replace Blizzard's player, target, target-of-tar
 - **Colours:** sky blue for casts, green for channels, grey for spells you can't interrupt. A failed or interrupted cast flashes red with the reason.
 - `/kui castbar test` runs a sample cast, so you can check the look without casting.
 
+## Action bars
+
+Flat, square bars replace the game's: up to eight action bars (as many as the client has), plus the stance, pet and Shaman totem bars, and the menu and bag buttons. Your spells and keys stay where they are, because the bars use the game's own action slots and key bindings.
+
+- **The look:** cropped square icons on a dark slot with a thin border. No end caps or other artwork.
+- **Which bars start on:** Bar 1, any bar the game was showing, and any bar with something on it. After that it's your choice.
+- **What still works:** paging with Shift and a number, stance and form pages, drag and drop, cast on key down, cooldowns, charges, procs and the game's vehicle bar.
+- **Out of range** icons turn red. An equipped item gets a green border.
+- **Empty slots** can be hidden. They come back while you hold a spell, even in combat, so you can see where it can go.
+
+**Quick keybinds:** type `/kui keys`, or use the minimap menu or the **Quick keybinds** button in the edit mode. This is the game's own quick keybind mode, and it works on every kUI bar, including the menu and bag buttons. Hover a button, press a key, mouse button or wheel, then click **Okay** to save or **Cancel** to undo. Esc clears a button's key. Every bar and empty slot shows while it's open, so you can bind what's normally hidden. Entering combat closes it and drops keys you hadn't saved. It also works if you open it from the game's settings.
+
+`/kui bars` opens the edit mode on the **Action bars** tab. Pick a bar at the top of the tab, or click its overlay. Everything else on the tab changes that bar. Every slider has a box for typing an exact value: Enter or Tab or clicking away keeps it, and Esc puts it back. Typed values stay between the slider's limits but don't have to land on one of its steps, so a scale of 1.23 is fine:
+
+| Setting | What it does |
+|---|---|
+| Show this bar | Turns the bar on or off. An off bar gives its keys back to the game |
+| Buttons, buttons per row | How many buttons, and how they wrap |
+| Button size, gap across, gap between rows, scale | Size and spacing |
+| Fill rows to the, add rows going | Which way the buttons run |
+| Show | Always, on hover, only in combat, or only out of combat |
+| Opacity, opacity when faded | How solid it is, and how far it fades on hover |
+| Empty slots | Show or hide slots with nothing in them |
+| Key bindings, macro names, stack counts | Each can be off, and each has its own size |
+| Cooldown numbers, number size | The countdown on the icon |
+| Border | The thin border around each button |
+
+The **All bars** card has red icons out of range and the proc glow. **Copy look to all bars** gives every other bar on this tab this bar's size, gaps, scale, text and visibility, but not its position or number of buttons. **Reset this frame** puts the picked bar back to its default look and spot.
+
+**The totem bar** has the same flat buttons, with a border in each totem's colour: fire, earth, water and air. It sets its size, gaps, rows, text and visibility the same way. A spell or totem you don't have yet doesn't leave a gap. Totem keys stay the game's own, and the flyout that picks a totem still opens above each button.
+
+**Menu and bag buttons** have their own **Menu & bags** tab. Pick a bar at the top, or click its overlay:
+
+| Setting | What it does |
+|---|---|
+| Show this bar | Turns the buttons on or off. The keys that open your windows and bags work either way |
+| Buttons per row, button size, gaps, scale, fill and rows | The same layout as any bar |
+| Show, opacity, opacity when faded | The same visibility as any bar |
+| Border | The thin border around each button |
+| Grey menu icons | Menu icons in grey, or the game's colours |
+| Menu buttons | Take any menu button off the bar. The others close up |
+| Bag slots, reagent bag, key ring | Take these off the bag bar. The backpack always stays |
+| Free bag slots, free slots size | The count on the backpack |
+
+A menu button lights up while its window is open, and the game's alerts still flash on it. The menu goes back to the game for its vehicle bar and pet battles, and comes back afterwards.
+
+`/kui bars off` and `/reload` give you the game's bars back.
+
 ## Edit mode
 
-Click the **minimap icon** and choose **Edit mode**, or type **`/kui edit`**. Every frame gets a blue overlay, and a settings window opens with a tab for each frame: Player, Target, Target of target, Pet and Castbar. Settings are grouped into cards, with sliders (the mouse wheel works on them too), switches and side-by-side choices. A setting that has no effect right now, like Height with the power bar off, dims.
+Click the **minimap icon** and choose **Edit mode**, or type **`/kui edit`**. Every frame gets a blue overlay, and a settings window opens with a tab for each frame: Player, Target, Target of target, Pet, Castbar and Action bars. Settings are grouped into cards, with sliders (the mouse wheel works on them too), switches and side-by-side choices. A setting that has no effect right now, like Height with the power bar off, dims.
 
 - **Drag** a frame to move it.
 - **Click** a frame to jump to its settings.
@@ -260,6 +308,11 @@ The loot window is replaced with a QuestDirect-style one:
 | `/kui castbar target` | Cast bar on the target frame on or off |
 | `/kui castbar reset` | Your cast bar back to its default settings and spot |
 | `/kui castbar on` / `off` | kUI's cast bar or the game's for yourself (needs `/reload`) |
+| `/kui bars` | Open the edit mode on the action bars |
+| `/kui keys` | Quick keybinds: hover a button and press a key |
+| `/kui bars reset` | All the action bars back to their default settings and spots |
+| `/kui bars debug` | List each bar's state in chat, for reporting a problem |
+| `/kui bars on` / `off` | kUI's action bars or the game's (needs `/reload`) |
 | `/kui loot on` / `off` | Use the kUI loot window or the game's (needs `/reload`) |
 | `/kui map on` / `off` | Square minimap or the game's (needs `/reload`) |
 | `/kui bags on` / `off` | kUI bags or the game's (needs `/reload`) |
@@ -292,11 +345,12 @@ The loot window is replaced with a QuestDirect-style one:
 ## Good to know
 
 - **Tested mostly outside the game**, against a stubbed WoW API, plus play in game for the unit frames, settings windows and minimap icon.
-  - Settings controls: sliders, the mouse wheel, limits, switches, choices, steppers, dimmed rows, cards in two columns, the same controls in the bag settings.
+  - Settings controls: sliders, typed values, the mouse wheel, limits, switches, choices, steppers, dimmed rows, cards in two columns, the same controls in the bag settings.
   - Minimap icon: placement on square and round maps, dragging, every menu item, part switches and the reload offer, closing by clicking elsewhere, hiding it.
   - Unit frames: Blizzard's frames hidden and silent, totems moved out, secure click setup, health, power, level, tags, colours, two-part player names, raid marker, Dead, Ghost and Offline, target-of-target and pet, buffs and debuffs, combo pips, moving, scale, closing on combat, waiting for combat to end after a `/reload`.
   - Edit mode: every setting through the panel's own buttons, one frame's change not touching another, limits, flat and 3D portraits, elite and rare preview, frame reset, older settings carrying over, nothing changing in combat, Done, Esc and combat closing it.
   - Castbar: casts, channels, pushback, finishing, failed and interrupted, another spell's failure not ending a cast, can't-interrupt colour, a new target, the sample.
+  - Action bars, mostly outside the game, with the layout, keys, menu and bag buttons seen working in game: which bars start on, the game's bars retired, slots, keys and shortened key names, layout in every direction, paging, vehicle and form pages, the secure snippets, visibility, hover fading, empty slots, range, procs, stance, pet and totem bars, the menu and bag buttons (the game redrawing them, laying them out, or borrowing the menu for its vehicle bar), quick keybinds opened from kUI or the game, every setting through the panel, typed values, copy and reset, nothing secure changing in combat.
   - Secret values: health, power, names, levels, auras and casts as secret values, with any maths or text work on them in Lua failing the test.
   - Rares: Classic spawn points placed and pinned, nameplate, mouseover and map-marker alerts, normal mobs ignored, level and position, model, sound, flash, no repeats, skull on target, kills, waypoint, the target button waiting for combat to end, ignore, the zone list.
   - Tooltips: panel, hidden Blizzard frame, old-style backdrops, health bar, font, rarity border and its reset, item level, vendor price (and not when the game shows one), drop lines best-first with chests by name, turning lines off.
@@ -311,6 +365,8 @@ The loot window is replaced with a QuestDirect-style one:
 - If anything errors in game, the Lua error text is what I need.
 - If the game blocks kUI ("Interface action failed because of an AddOn"), kUI prints what was blocked in chat. That line is what I need.
 - The unit frames replace Blizzard's completely, so anything of Blizzard's that lived inside them only comes back if kUI rebuilds it. Not in yet: a Druid's mana bar while shapeshifted, and heal and absorb bars on health. `/kui frames off` and `/reload` gives you Blizzard's frames back.
+- The action bars follow the approach Dominos uses on this client, checked against the game's own interface code. Add-ons that skin or replace the game's action bars, like Dominos or Bartender, will clash: use one or the other.
+- If the menu or bag bar can't be set up, kUI says so in chat and leaves those buttons as the game has them. Your action bars carry on. That chat line is what I need.
 - If using an item from your bags in combat ever shows "Interface action failed because of an AddOn", tell me. Bag add-ons occasionally hit that and it has a known fix.
 - Not in yet: the bank's own row for equipping bank bags (`/kui bank off` and `/reload` gives you Blizzard's bank for that), the keyring, and custom categories.
 
@@ -323,6 +379,7 @@ The loot window is replaced with a QuestDirect-style one:
 | `Core.lua` | Settings and `/kui` |
 | `UnitFrames.lua` | Player, target, target-of-target and pet frames, target auras, combo pips |
 | `Castbar.lua` | Cast bars for you and your target |
+| `ActionBars.lua` | Action, stance, pet and totem bars, and the menu and bag buttons |
 | `Controls.lua` | The settings controls: sliders, switches, choices, cards, buttons |
 | `EditMode.lua` | The edit mode's settings window |
 | `MinimapIcon.lua` | The minimap icon and its menu |

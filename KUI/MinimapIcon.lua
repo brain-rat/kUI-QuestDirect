@@ -64,10 +64,13 @@ local function Items()
   end
 
   section("Customise")
-  if ns.UnitFrames.enabled or ns.Castbar.enabled then
+  if ns.UnitFrames.enabled or ns.Castbar.enabled or ns.ActionBars.enabled then
     action("Edit mode", function() FUI:SetUnlocked(not FUI.unlocked) end, {
       on = FUI.unlocked, off = InCombatLockdown(), note = FUI.unlocked and "open" or nil,
     })
+  end
+  if ns.ActionBars.enabled then
+    action("Quick keybinds", function() ns.ActionBars:QuickKeys() end, { off = InCombatLockdown() })
   end
   if ns.Bags.enabled then
     action("Bag settings", function() ns.Bags:Open(); ns.Bags:ToggleSettings() end)

@@ -54,6 +54,12 @@ local defaults = {
   targetCastH = 18,
   castScale = 1,
   castLeft = nil, castTop = nil,
+  -- Action bars
+  bars = true,
+  barCfg = nil, -- see ActionBars.lua
+  barSeeded = nil, -- the first run's choice of which bars start on is done
+  barRange = true, -- tint icons red when out of range
+  barProcs = true, -- the game's glow when a spell procs
   editLeft = nil, editTop = nil, -- where the edit mode panel sits
   icon = true,     -- minimap icon
   iconAngle = 315, -- where on the map's edge, in degrees
@@ -164,6 +170,10 @@ SlashCmdList.KUI = function(msg)
     ns.UnitFrames:Slash(arg)
   elseif cmd == "castbar" then
     ns.Castbar:Slash(arg)
+  elseif cmd == "bars" then
+    if ns.ActionBars.enabled then ns.ActionBars:Slash(arg) else FUI:Print("The action bars are off. /kui bars on, then /reload.") end
+  elseif cmd == "keys" then
+    if ns.ActionBars.enabled then ns.ActionBars:QuickKeys() else FUI:Print("The action bars are off. /kui bars on, then /reload.") end
   elseif cmd == "bags" then
     ns.Bags:Slash(arg)
   elseif cmd == "rares" or cmd == "rare" then
@@ -200,6 +210,6 @@ SlashCmdList.KUI = function(msg)
     local parts = {}
     for _, m in ipairs(FUI.modules) do parts[#parts + 1] = m.name .. " " .. OnOff(db[m.key] ~= false) end
     FUI:Print("%s. Opacity %.2f, glow %.2f.", table.concat(parts, ", "), db.alpha, db.glow)
-    FUI:Print("/kui edit · frames · castbar · icon on|off · bags · rares · tooltips · loot on|off · map on|off · bags on|off · rares on|off · tooltips on|off · junk on|off · bank on|off · font <name> · alpha 0-1 · glow 0-1 · common · test (sample loot window) · reset")
+    FUI:Print("/kui edit · frames · castbar · bars (reset · debug) · bars on|off · keys · icon on|off · bags · rares · tooltips · loot on|off · map on|off · bags on|off · rares on|off · tooltips on|off · junk on|off · bank on|off · font <name> · alpha 0-1 · glow 0-1 · common · test (sample loot window) · reset")
   end
 end

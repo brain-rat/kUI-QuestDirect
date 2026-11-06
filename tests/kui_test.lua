@@ -289,6 +289,215 @@ PlayerCastingBarFrame:RegisterEvent("UNIT_SPELLCAST_START")
 function PlayerCastingBarFrame:SetUnit(u) self.barUnit = u or "none" end
 for _, b in ipairs({ PlayerFrame, TargetFrame, PetFrame, TargetFrameToT }) do unitWatch[b] = true end
 
+-- Action bars world
+local stateDrivers, attrDrivers = {}, {}
+local function barStateDriver(f, kind, v) stateDrivers[f] = stateDrivers[f] or {}; stateDrivers[f][kind] = v end
+RegisterStateDriver = barStateDriver
+local function barStateDriverOff(f, kind) if stateDrivers[f] then stateDrivers[f][kind] = nil end end
+UnregisterStateDriver = barStateDriverOff
+function RegisterAttributeDriver(f, kind, v) attrDrivers[f] = attrDrivers[f] or {}; attrDrivers[f][kind] = v end
+function Mock:GetAttribute(k) return self.attrs and self.attrs[k] end
+function Mock:SetAttributeNoHandler(k, v) self.attrs = self.attrs or {}; self.attrs[k] = v end
+function Mock:WrapScript(f, script, pre) f.wrapped = f.wrapped or {}; f.wrapped[script] = pre end
+function Mock:SetJustifyH(j) self.justify = j end
+function Mock:SetTexCoord(...) self.texCoord = { ... } end
+function Mock:RemoveMaskTexture(t) self.maskRemoved = t end
+function Mock:GetCheckedTexture() self.checkTex = self.checkTex or new("Texture"); return self.checkTex end
+function Mock:SetChecked(v) self.checked = v end
+function Mock:SetHideCountdownNumbers(v) self.hideNumbers = v end
+function Mock:SetCountdownFont(n) self.countdownFont = n end
+function Mock:SetSwipeColor(...) self.swipe = { ... } end
+function Mock:Clear() self.cleared = true end
+function Mock:SetFrameStrata(s) self.strata = s end
+function Mock:EnableMouse(v) self.mouseOn = v end
+local baseHook = hooksecurefunc
+function hooksecurefunc(t, k, fn)
+  if type(t) == "string" then return baseHook(_G, t, k) end
+  return baseHook(t, k, fn)
+end
+local barKeys, barActions, equipped = {}, {}, {}
+local boundKeys, bindCalls = {}, 0
+function GetBindingKey(cmd) return unpack(barKeys[cmd] or {}) end
+function SetOverrideBindingClick(owner, _, key, name, button) bindCalls = bindCalls + 1; boundKeys[key] = { owner = owner, name = name, button = button } end
+function ClearOverrideBindings(owner) for k, v in pairs(boundKeys) do if v.owner == owner then boundKeys[k] = nil end end end
+function HasAction(slot) return barActions[slot] == true end
+function IsEquippedAction(slot) return equipped[slot] == true end
+local barToggles = { true, false, false, false }
+function GetActionBarToggles() return unpack(barToggles) end
+function CreateFont(name) local f = new("Font", name); return f end
+local forms = {}
+function GetNumShapeshiftForms() return #forms end
+function GetShapeshiftFormInfo(i) local x = forms[i]; if x then return x.icon, x.active, x.castable end end
+function GetShapeshiftFormCooldown(i) local x = forms[i]; if x then return x.cdStart or 0, x.cdDur or 0, 1 end end
+local petActions = {}
+function GetPetActionInfo(i) return petActions[i] end
+NUM_PET_ACTION_SLOTS = 10
+local function actionButtonParts(f)
+  f.icon = f:CreateTexture()
+  f.IconMask = f:CreateTexture()
+  f.NormalTexture = f:CreateTexture()
+  f.SlotArt, f.SlotBackground, f.Border, f.Flash = f:CreateTexture(), f:CreateTexture(), f:CreateTexture(), f:CreateTexture()
+  f.SpellHighlightTexture, f.NewActionTexture = f:CreateTexture(), f:CreateTexture()
+  f.SpellCastAnimFrame, f.InterruptDisplay = new("Frame", nil, f), new("Frame", nil, f)
+  f.HotKey, f.Count, f.Name = f:CreateFontString(), f:CreateFontString(), f:CreateFontString()
+  f.cooldown = new("Cooldown", nil, f)
+  f.buttonNormal = f:CreateTexture() -- not always the same texture as the NormalTexture key
+  f.GetNormalTexture = function(self) return self.buttonNormal end
+end
+local baseCreate2 = CreateFrame
+function CreateFrame(kind, name, parent, template, id)
+  local f = baseCreate2(kind, name, parent, template)
+  if template == "ActionBarButtonTemplate" or template == "StanceButtonTemplate" then
+    actionButtonParts(f)
+    if id then f.id = id end
+    f.GetName = function() return name end
+    if template == "ActionBarButtonTemplate" then
+      f.updates, f.usables = 0, 0
+      f.Update = function(self) self.updates = self.updates + 1 end
+      f.UpdateUsable = function(self) self.usables = self.usables + 1; self.icon:SetVertexColor(1, 1, 1) end
+    end
+  end
+  return f
+end
+MainActionBar = new("Frame", "MainActionBar")
+MainActionBar:RegisterEvent("ACTIONBAR_PAGE_CHANGED")
+MainActionBar.actionButtons = { new("CheckButton", "ActionButton1") }
+MainActionBar.actionButtons[1]:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
+for _, n in ipairs({ "MultiBarBottomLeft", "MultiBarBottomRight", "MultiBarLeft", "MultiBarRight", "MultiBar5", "MultiBar6" }) do
+  local b = new("Frame", n)
+  b:RegisterEvent("ACTIONBAR_PAGE_CHANGED")
+  b.actionButtons = { new("CheckButton", n .. "Button1") }
+end
+StanceBar = new("Frame", "StanceBar")
+StanceBar:RegisterEvent("UPDATE_SHAPESHIFT_FORMS")
+StanceBar.actionButtons = { new("CheckButton", "StanceButton1") }
+PetActionBar = new("Frame", "PetActionBar")
+PetActionBar:RegisterEvent("PET_BAR_UPDATE")
+PetActionBar.scripts.OnEvent = function() end
+MainActionBar.scripts.OnEvent = function() end
+PetActionBar.actionButtons = {}
+for i = 1, 10 do
+  local b = new("CheckButton", "PetActionButton" .. i, PetActionBar)
+  actionButtonParts(b)
+  b.id = i
+  PetActionBar.actionButtons[i] = b
+end
+OverrideActionBar = new("Frame", "OverrideActionBar")
+OverrideActionBarButton1 = new("CheckButton", "OverrideActionBarButton1")
+OverrideActionBarButton1.IsVisible = function() return false end
+MultiCastActionBarFrame = new("Frame", "MultiCastActionBarFrame")
+MultiCastActionBarFrame.w, MultiCastActionBarFrame.h = 230, 40
+MultiCastActionBarFrame.numActiveSlots = 0
+local function namedButton(name, parent)
+  local b = new("CheckButton", name, parent)
+  b.GetName = function() return name end
+  return b
+end
+local function totemButton(name, parent)
+  local b = namedButton(name, parent)
+  actionButtonParts(b)
+  b.overlayTex = b:CreateTexture()
+  return b
+end
+MultiCastSummonSpellButton = totemButton("MultiCastSummonSpellButton", MultiCastActionBarFrame)
+MultiCastRecallSpellButton = totemButton("MultiCastRecallSpellButton", MultiCastActionBarFrame)
+new("Texture", "MultiCastRecallSpellButtonHighlight")
+for i = 1, 4 do
+  local slot = namedButton("MultiCastSlotButton" .. i, MultiCastActionBarFrame)
+  slot.background, slot.overlayTex = slot:CreateTexture(), slot:CreateTexture()
+end
+for i = 1, 12 do totemButton("MultiCastActionButton" .. i, MultiCastActionBarFrame) end
+MultiCastFlyoutFrame = new("Frame", "MultiCastFlyoutFrame", MultiCastActionBarFrame)
+MultiCastFlyoutFrame.top, MultiCastFlyoutFrame.middle = MultiCastFlyoutFrame:CreateTexture(), MultiCastFlyoutFrame:CreateTexture()
+MultiCastFlyoutFrame.buttons = {}
+function MultiCastActionButton_Update() end
+function MultiCastFlyoutFrame_ToggleFlyout() end
+-- What the game does when the totem slots change: it points two of the buttons somewhere new.
+function MultiCastActionBarFrame_Update(self)
+  MultiCastSlotButton1:SetPoint("BOTTOMLEFT", self, "BOTTOMLEFT", 41, 3)
+  MultiCastRecallSpellButton:SetPoint("LEFT", MultiCastSlotButton4, "RIGHT", 8, 0)
+end
+-- The game's quick keybind mode. Closing it opens the game's settings.
+QuickKeybindFrame = new("Button", "QuickKeybindFrame", UIParent)
+QuickKeybindFrame.shown = false
+SettingsPanel = new("Frame", "SettingsPanel", UIParent)
+SettingsPanel.shown = false
+QuickKeybindFrame.scripts.OnHide = function() SettingsPanel:Show() end
+function QuickKeybindFrame:CancelBinding() self.cancelled = true; self:Hide() end
+function HideUIPanel(f) f:Hide() end
+MicroMenuContainer = new("Frame", "MicroMenuContainer", UIParent)
+MicroMenu = new("Frame", "MicroMenu", MicroMenuContainer)
+function MicroMenu:GetParent() return self.parent end
+function MicroMenu:SetParent(p) self.parent = p end
+local microRules = {}
+local function microButton(name)
+  local b = namedButton(name, MicroMenu)
+  b.w, b.h = 32, 40
+  b.Background, b.PushedBackground, b.FlashBorder = b:CreateTexture(), b:CreateTexture(), b:CreateTexture()
+  b.normalArt, b.disabledArt = b:CreateTexture(), b:CreateTexture()
+  b.GetNormalTexture = function(self) return self.normalArt end
+  b.GetDisabledTexture = function(self) return self.disabledArt end
+  b.FlashContent = b:CreateTexture()
+  -- The game anchors the art again whenever a button changes state.
+  b.SetNormal = function(self) self.normalArt:ClearAllPoints(); self.normalArt:SetPoint("TOPLEFT"); self.state = "normal" end
+  b.SetPushed = function(self) self.normalArt:ClearAllPoints(); self.normalArt:SetPoint("TOPLEFT"); self.state = "pushed" end
+  return b
+end
+for _, n in ipairs({ "CharacterMicroButton", "QuestLogMicroButton", "EJMicroButton", "HelpMicroButton", "StoreMicroButton", "MainMenuMicroButton" }) do
+  microButton(n)
+end
+CharacterMicroButton.Shadow, CharacterMicroButton.PushedShadow = CharacterMicroButton:CreateTexture(), CharacterMicroButton:CreateTexture()
+CharacterMicroButton.Portrait, CharacterMicroButton.PortraitMask = CharacterMicroButton:CreateTexture(), CharacterMicroButton:CreateTexture()
+MainMenuMicroButton.MainMenuBarPerformanceBar = MainMenuMicroButton:CreateTexture()
+HelpOpenWebTicketButton = new("Frame", "HelpOpenWebTicketButton")
+MicroMenu.GenerateButtonInfos = function()
+  return {
+    { button = CharacterMicroButton }, { button = QuestLogMicroButton },
+    { button = EJMicroButton, callback = function() return microRules.ej end },
+    { button = HelpMicroButton }, { button = StoreMicroButton }, { button = MainMenuMicroButton },
+  }
+end
+MicroMenu.UpdateHelpTicketButtonAnchor = function() end
+BagsBar = new("Frame", "BagsBar", UIParent)
+local function bagButton(name)
+  local b = namedButton(name, BagsBar)
+  b.w, b.h = 45, 45
+  b.icon = b:CreateTexture()
+  b.SquareMask, b.IconBorder, b.IconOverlay = b:CreateTexture(), b:CreateTexture(), b:CreateTexture()
+  b.SlotHighlightTexture = b:CreateTexture()
+  b.Count = b:CreateFontString()
+  b.art = b:CreateTexture()
+  b.GetNormalTexture = function(self) return self.art end
+  -- What the game does on any bag change: back to its own art.
+  b.UpdateTextures = function(self)
+    self:GetHighlightTexture().atlas = "game"
+    self:GetHighlightTexture().ctex = nil
+    self:GetPushedTexture().ctex = nil
+  end
+  return b
+end
+for _, n in ipairs({ "KeyRingButton", "CharacterReagentBag0Slot", "CharacterBag3Slot", "CharacterBag2Slot", "CharacterBag1Slot", "CharacterBag0Slot", "MainMenuBarBackpackButton" }) do
+  bagButton(n)
+end
+MainMenuBarBackpackButton.FreeSlots = MainMenuBarBackpackButton:CreateFontString()
+MainMenuBarBackpackButton.SetCountShown = function(self, v) self.countShown = v end
+NUM_BAG_SLOTS = 4
+C_ActionBar = { ShouldShowKeyring = function() return true end }
+-- What the game does when you pick up an item: it lays the bag buttons out again.
+BagsBar.Layout = function(self)
+  MainMenuBarBackpackButton:ClearAllPoints()
+  MainMenuBarBackpackButton:SetPoint("RIGHT", self, "RIGHT")
+end
+local unregistered = {}
+EventRegistry = { UnregisterCallback = function(_, ev, owner) unregistered[ev] = owner end }
+ActionButtonSpellAlertManager = { alerts = {}, ShowAlert = function(self, b) self.alerts[b] = true end, HideAlert = function(self, b) self.alerts[b] = nil end }
+ActionButton_UpdateCooldownNumberHidden = function(b) b.cooldown:SetHideCountdownNumbers(true) end
+barKeys.ACTIONBUTTON1 = { "1", "F1" }
+barKeys.ACTIONBUTTON2 = { "SHIFT-MOUSEWHEELUP" }
+barKeys.MULTIACTIONBAR1BUTTON2 = { "SHIFT-Q" }
+barActions[1] = true
+barActions[49] = true -- something on bar 3, which the game has hidden
+
 -- load
 local ns = {}
 for line in io.lines(DIR .. "/KUI.toc") do
@@ -1308,7 +1517,8 @@ SlashCmdList.KUI("edit")
 local Panel = KUIEditMode
 local E = ns.EditMode
 check(Panel and Panel.shown and U.unlocked and P.mover.shown and ToT.mover.shown and Pet.mover.shown and Bar.mover.shown, "/kui edit opens the panel and overlays")
-check(#E.tabs == 5 and E.tab == "player", "a tab for each frame")
+check(#E.tabs == 7 and E.tab == "player", "a tab for each frame")
+check(KUIEditMode.w == 340 * 2 + 8 * 3, "the window has room for them")
 check(UISpecialFrames[#UISpecialFrames] == "KUIEditMode", "Esc closes it")
 local function row(key)
   for _, r in ipairs(E.rows) do if r.shown ~= false and r.def and r.def.key == key then return r end end
@@ -2070,6 +2280,10 @@ local function cast(c)
   return text
 end
 check(cast({ name = "Opening", display = "Opening" }) == "Opening", "the usual case")
+check(cast({ name = "Opening - No Text", display = "Opening - No Text" }) == "Opening", "a water barrel: the designers' note comes off")
+check(cast({ name = "Opening - No Text", display = "" }) == "Opening", "from the plain name too")
+check(cast({ name = "Fishing - No Text Here", display = "" }) == "Fishing - No Text Here", "only as the end of a name")
+check(cast({ name = "Hearthstone", display = "Hearthstone" }) == "Hearthstone", "other spells are left alone")
 check(cast({ name = "", display = "Opening" }) == "Opening", "opening a chest: empty name, display name used")
 check(cast({ name = "Internal", display = "Shown" }) == "Shown", "the display name wins, as on the game's own bar")
 check(cast({ name = "Lightning Bolt", display = "" }) == "Lightning Bolt", "empty display name falls back to the name")
@@ -2101,6 +2315,987 @@ issecretvalue = nil
 castInfo.player = nil
 fire("UNIT_SPELLCAST_STOP", "player", "s1")
 Bar.scripts.OnUpdate(Bar, 2)
+end)()
+
+;(function()
+print("== Action bars")
+local AB = ns.ActionBars
+local E = ns.EditMode
+inCombat = false
+RegisterStateDriver, UnregisterStateDriver = barStateDriver, barStateDriverOff -- the rare alert's tests swapped in their own
+check(AB.enabled and AB.started, "started at login")
+local Bar1, Bar2, Bar3, Bar4 = KUIBar1, KUIBar2, KUIBar3, KUIBar4
+local hidden = ns.Style.HiddenParent()
+
+-- Which bars start on
+check(KUIDB.barCfg.bar1.on, "bar 1 is on")
+check(KUIDB.barCfg.bar2.on, "a bar the game was showing stays on")
+check(KUIDB.barCfg.bar3.on, "a bar with something on it stays on")
+check(not KUIDB.barCfg.bar4 or not KUIDB.barCfg.bar4.on, "an empty, hidden bar starts off")
+check(Bar1 and Bar2 and Bar3 and not KUIBar4, "frames only for the bars that are on")
+local names = {}
+for _, it in ipairs(AB:List()) do names[#names + 1] = it.key end
+check(table.concat(names, " ") == "bar1 bar2 bar3 bar4 bar5 bar6 bar7 stance pet totem", "only bars this client has: " .. table.concat(names, " "))
+fire("PLAYER_ENTERING_WORLD")
+check(KUIDB.barSeeded, "the first run's choice is remembered")
+barActions[25] = true
+AB:Seed()
+check(not KUIDB.barCfg.bar4 or not KUIDB.barCfg.bar4.on, "and doesn't override your choices later")
+barActions[25] = nil
+
+-- The game's bars
+check(MultiBarLeft.parent == hidden and MultiBarLeft.allOff, "the game's side bar is retired")
+check(#MultiBarLeft.actionButtons == 0, "and forgets its buttons")
+check(MainActionBar.parent == hidden and not MainActionBar.allOff and MainActionBar.events.ACTIONBAR_PAGE_CHANGED, "the main bar is hidden but keeps listening, for vehicles")
+check(ActionButton1.allOff and ActionButton1.attrs.statehidden and not ActionButton1.shown, "its buttons are out of the way")
+check(StanceBar.parent == hidden and #StanceBar.actionButtons == 1, "the stance bar is hidden, its buttons still listed")
+check(PetActionBar.parent == hidden and PetActionBar.events.PET_BAR_UPDATE, "the pet bar is hidden but keeps updating")
+
+-- Slots and templates
+local b = KUIBar1Button1
+check(b and b.tmpl == "ActionBarButtonTemplate" and b.parent == Bar1 and b.kind == "CheckButton", "buttons use the game's template")
+check(b.id == 0 and b.attrs.action == 1, "the slot comes from the action attribute, not the game's paging")
+check(KUIBar2Button1.attrs.action == 61 and KUIBar2Button12.attrs.action == 72, "bar 2: the game's bottom left slots")
+check(KUIBar3Button1.attrs.action == 49, "bar 3: bottom right")
+check(#Bar1.buttons == 12, "twelve buttons")
+
+-- Keys
+check(b.kKey.text == "1", "key text")
+check(boundKeys["1"] and boundKeys["1"].owner == b.kBind and boundKeys["1"].name == "KUIBar1Button1Key" and boundKeys["1"].button == "HOTKEY", "your key presses this button")
+check(boundKeys.F1 and boundKeys.F1.owner == b.kBind, "every key bound to it, not just the first")
+check(KUIBar1Button2.kKey.text == "SWU", "long key names shortened: " .. tostring(KUIBar1Button2.kKey.text))
+check(KUIBar2Button2.kKey.text == "SQ" and boundKeys["SHIFT-Q"].owner == KUIBar2Button2.kBind, "a multibar key")
+local S0 = AB.ShortKey
+check(S0("BUTTON4") == "M4" and S0("CTRL-NUMPAD3") == "CN3" and S0("BACKSPACE") == "Bs" and S0("ALT-SPACE") == "ASp" and S0(nil) == "", "short key names")
+check(b.kBind.tmpl == "SecureActionButtonTemplate" and b.kBind.attrs["useparent-action"] and b.kBind.attrs.type == "action", "the key button borrows its parent's action")
+check(b.kBind.wrapped and b.kBind.wrapped.OnClick, "key presses are turned into clicks")
+local calls = bindCalls
+fire("UPDATE_BINDINGS")
+check(bindCalls == calls, "unchanged keys aren't rebound (setting them fires this event)")
+barKeys.ACTIONBUTTON3 = { "E" }
+inCombat = true
+fire("UPDATE_BINDINGS")
+check(KUIBar1Button3.kKey.text == "E", "the text updates in combat")
+check(not boundKeys.E and AB.keysPending, "binding waits for combat to end")
+inCombat = false
+fire("PLAYER_REGEN_ENABLED")
+check(boundKeys.E and boundKeys.E.owner == KUIBar1Button3.kBind and not AB.keysPending, "and happens after")
+
+-- The look
+check(b.NormalTexture.parent == hidden and b.buttonNormal.parent == hidden and b.SlotArt.parent == hidden and b.Border.parent == hidden and b.HotKey.parent == hidden, "the game's art is gone for good")
+check(b.SpellCastAnimFrame.parent == hidden and b.InterruptDisplay.parent == hidden, "and its cast animations")
+check(b.icon.maskRemoved == b.IconMask and b.icon.texCoord[1] == 0.07, "square icons, edges cropped")
+check(b.kBack.ctex and b.kEdges[1].shown, "a flat dark slot and a thin border")
+check(b.Name.parent == b.kText and b.Count.parent == b.kText, "text sits above the cooldown swipe")
+check(b.kText.flevel > b.flevel, "the text layer is higher")
+check(b.cooldown.hideNumbers == false and b.cooldown.countdownFont == "KUICooldownFontbar1", "cooldown numbers, in kUI's font")
+check(KUICooldownFontbar1.font[2] == 14, "at the chosen size")
+ActionButton_UpdateCooldownNumberHidden(b)
+check(b.cooldown.hideNumbers == false, "kUI's setting wins over the game's on our bars")
+
+-- Layout
+check(Bar1.w == 12 * 36 + 11 * 3 and Bar1.h == 36, "the bar fits its buttons: " .. tostring(Bar1.w))
+check(b.w == 36 and b.h == 36, "button size")
+local function at(btn) local p = btn.points[#btn.points]; return p[4], p[5] end
+local x, y = at(KUIBar1Button4)
+check(x == 3 * 39 and y == 0, "buttons run left to right: " .. tostring(x))
+local c = AB:Cfg("bar1")
+c.perRow, c.count, c.size, c.gapX, c.gapY = 4, 10, 20, 2, 5
+AB:Changed("bar1")
+check(Bar1.w == 4 * 20 + 3 * 2 and Bar1.h == 3 * 20 + 2 * 5, "rows: " .. tostring(Bar1.w) .. "x" .. tostring(Bar1.h))
+x, y = at(KUIBar1Button5)
+check(x == 0 and y == 25, "a new row goes above")
+x, y = at(KUIBar1Button4)
+check(x == 66 and y == 0, "the row's end")
+check(KUIBar1Button10.shown and not KUIBar1Button11.shown and KUIBar1Button11.attrs.statehidden, "spare buttons are hidden")
+c.growX = "left"
+AB:Changed("bar1")
+x, y = at(KUIBar1Button1)
+check(x == 66 and y == 0, "rows can fill to the left")
+c.growY = "down"
+AB:Changed("bar1")
+x, y = at(KUIBar1Button1)
+check(y == 50, "and be added downwards: " .. tostring(y))
+c.scale = 1.5
+AB:Changed("bar1")
+check(Bar1.scale == 1.5, "scale")
+c.left, c.top = 100, 200
+AB:Changed("bar1")
+local p = Bar1.points[#Bar1.points]
+check(p[1] == "TOPLEFT" and p[4] == 100 and p[5] == 200, "a saved spot")
+AB:ResetBar("bar1")
+check(c.perRow == 12 and c.left == nil and c.on and Bar1.w == 465, "reset: default look and spot, still on")
+
+-- Paging on bar 1
+check(stateDrivers[Bar1].page:find("[bar:2]2", 1, true) and stateDrivers[Bar1].page:find("[bonusbar:1]7", 1, true), "bar 1 pages")
+check(not stateDrivers[Bar2].page, "other bars don't")
+local special = { tonumber = tonumber }
+local handle
+function handle(f)
+  return setmetatable({}, { __index = function(_, k)
+    if k == "GetAttribute" then return function(_, n) return f.attrs and f.attrs[n] end end
+    if k == "SetAttribute" then return function(_, n, v) f.attrs = f.attrs or {}; f.attrs[n] = v end end
+    if k == "ChildUpdate" then
+      return function(_, id, msg)
+        for _, kid in ipairs(f.buttons) do
+          local code = kid.attrs["_childupdate-" .. id]
+          if code then
+            local fn = assert(load("local self, scriptid, message = ...; " .. code, "childupdate", "t", {}))
+            fn(handle(kid), id, msg)
+          end
+        end
+      end
+    end
+    if k == "CallMethod" then return function(_, m, ...) return f[m](f, ...) end end
+  end })
+end
+local function page(state)
+  local env = setmetatable({ control = handle(Bar1) }, { __index = special })
+  local fn = assert(load("local self, stateid, newstate = ...; " .. Bar1.attrs["_onstate-page"], "onstate", "t", env))
+  fn(handle(Bar1), "page", state)
+end
+page("2")
+check(KUIBar1Button1.attrs.action == 13 and KUIBar1Button12.attrs.action == 24, "Shift-2: page two")
+barActions[13] = nil
+page("7")
+check(KUIBar1Button1.attrs.action == 73, "a stance or form page")
+page("1")
+check(KUIBar1Button1.attrs.action == 1, "and back")
+special.HasVehicleActionBar = function() return true end
+special.GetVehicleBarIndex = function() return 16 end
+page("special")
+check(KUIBar1Button1.attrs.action == 181, "a vehicle's page comes from the game")
+special.HasVehicleActionBar, special.GetVehicleBarIndex = nil, nil
+special.HasOverrideActionBar = function() return true end
+special.GetOverrideBarIndex = function() return 14 end
+page("special")
+check(KUIBar1Button1.attrs.action == 157, "an override page")
+special.HasOverrideActionBar, special.GetOverrideBarIndex = nil, nil
+special.HasTempShapeshiftActionBar = function() return true end
+special.GetTempShapeshiftBarIndex = function() return 13 end
+page("special")
+check(KUIBar1Button1.attrs.action == 145, "a temporary form's page")
+special.HasTempShapeshiftActionBar, special.GetTempShapeshiftBarIndex = nil, nil
+special.HasBonusActionBar = function() return true end
+special.GetBonusBarIndex = function() return 11 end
+page("special")
+check(KUIBar1Button1.attrs.action == 121, "possession")
+special.HasBonusActionBar, special.GetBonusBarIndex = nil, nil
+page("special")
+check(KUIBar1Button1.attrs.action == 1, "nothing special after all: page one")
+KUIBar1Button1.kOut = true
+page("1")
+check(not KUIBar1Button1.kOut, "turning a page forgets the old slot's range")
+
+-- The other secure snippets at least run
+local keyCode = KUIBar1Button1.kBind.wrapped.OnClick
+local function keyClick(button, info)
+  local env = { GetActionInfo = function() return info end }
+  local me = { GetEffectiveAttribute = function() return 1 end }
+  return assert(load("local self, button, down = ...; " .. keyCode, "key", "t", env))(me, button, true)
+end
+check(keyClick("HOTKEY", "spell") == "LeftButton", "a key press clicks")
+check(keyClick("HOTKEY", "flyout") == false, "a flyout key press doesn't cast")
+check(keyClick("LeftButton", "spell") == nil, "real clicks pass straight through")
+local w = AB.wrap
+check(OverrideActionBarButton1.wrapped.OnShow and OverrideActionBarButton1.wrapped.OnHide, "kUI watches the vehicle bar")
+check(attrDrivers[w].petbattleui == "[petbattle]1;0", "and pet battles")
+local keysSet = {}
+local function override(name, over, pb)
+  keysSet = {}
+  w.attrs.overrideui, w.attrs.petbattleui = over, pb
+  local me = {
+    GetAttribute = function(_, n) return w.attrs[n] end,
+    ClearBindings = function() keysSet.cleared = true end,
+    RunAttribute = function(_, n, ...)
+      local function setb(_, _, key, cmd) keysSet[key] = cmd end
+      return assert(load("local self = ...; local function run(...) " .. w.attrs[n] .. " end; return run(select(2, ...))", n, "t", { select = select }))(setmetatable({ SetBinding = setb }, {}), ...)
+    end,
+  }
+  local env = { GetBindingKey = function(cmd) return unpack(barKeys[cmd] or {}) end }
+  assert(load("local self, name, value = ...; " .. w.attrs._onattributechanged, "ov", "t", env))(me, name, over)
+end
+override("overrideui", 1, 0)
+check(keysSet.cleared and keysSet["1"] == "ACTIONBUTTON1" and keysSet.F1 == "ACTIONBUTTON1", "the vehicle bar takes keys 1-6 back")
+override("overrideui", 0, 0)
+check(keysSet.cleared and not keysSet["1"], "and lets go after")
+
+-- Visibility
+local cfg2 = AB:Cfg("bar2")
+check(stateDrivers[Bar2].visibility == "[petbattle]hide;[overridebar][vehicleui]hide;show", "bars step aside for the vehicle bar: " .. tostring(stateDrivers[Bar2].visibility))
+cfg2.mode = "combat"
+AB:Changed("bar2")
+check(stateDrivers[Bar2].visibility:find("%[combat%]show;hide$"), "only in combat")
+cfg2.mode = "peace"
+AB:Changed("bar2")
+check(stateDrivers[Bar2].visibility:find("%[nocombat%]show;hide$"), "only out of combat")
+cfg2.mode = "always"
+AB:Changed("bar2")
+local realOverride = OverrideActionBar
+OverrideActionBar = nil
+check(AB:Driver(Bar2) == "[petbattle]hide;show", "no vehicle bar on this client: nothing to step aside for")
+OverrideActionBar = realOverride
+
+-- Empty slots
+local empty = KUIBar1Button2
+check(empty.alpha == 1, "empty slots show by default")
+local c1 = AB:Cfg("bar1")
+c1.empty = false
+AB:Changed("bar1")
+check(empty.alpha == 0 and KUIBar1Button1.alpha == 1, "or only filled ones")
+fire("ACTIONBAR_SHOWGRID")
+check(empty.alpha == 1, "picking up a spell shows where it can go")
+fire("ACTIONBAR_HIDEGRID")
+check(empty.alpha == 0, "putting it down hides them")
+inCombat = true
+fire("ACTIONBAR_SHOWGRID")
+check(empty.alpha == 1, "in combat too")
+fire("ACTIONBAR_HIDEGRID")
+inCombat = false
+barActions[2] = true
+fire("ACTIONBAR_SLOT_CHANGED", 2)
+check(empty.alpha == 1, "filling a slot shows it")
+barActions[2] = nil
+empty:Update()
+check(empty.alpha == 0, "emptying it hides it, when the game updates the button")
+barActions[73], barActions[74] = true, true
+page("7")
+check(KUIBar1Button1.alpha == 1 and KUIBar1Button2.alpha == 1, "a new page repaints")
+page("1")
+check(KUIBar1Button2.alpha == 0, "and again on the way back")
+c1.empty = true
+AB:Changed("bar1")
+equipped[2] = true
+fire("PLAYER_EQUIPMENT_CHANGED")
+check(empty.kEdges[1].ctex[2] == 0.85, "equipped items get a green border")
+equipped[2] = nil
+fire("PLAYER_EQUIPMENT_CHANGED")
+check(empty.kEdges[1].ctex[2] == ns.Style.SOFT[2], "and lose it")
+
+-- Text and border options
+c1.keys, c1.macro, c1.stack, c1.border = false, true, false, false
+c1.keySize, c1.macroSize, c1.stackSize, c1.cdText, c1.cdSize = 9, 13, 15, false, 22
+AB:Changed("bar1")
+check(b.kKey.alpha == 0 and b.Name.alpha == 1 and b.Count.alpha == 0, "each text can be off")
+check(b.Name.font[2] == 13 and b.kKey.font[2] == 9 and b.Count.font[2] == 15, "and has its own size")
+check(not b.kEdges[1].shown, "the border can be off")
+check(b.icon.points[1][2] == 0, "and the icon fills the slot")
+check(b.cooldown.hideNumbers == true and KUICooldownFontbar1.font[2] == 22, "cooldown number options")
+AB:ResetBar("bar1")
+check(b.kEdges[1].shown and b.icon.points[1][2] == 1, "border back")
+
+-- Out of range
+fire("ACTION_RANGE_CHECK_UPDATE", 1, false, true)
+check(b.kOut and b.icon.vc[1] == 0.85, "out of range: red icon")
+b:UpdateUsable()
+check(b.icon.vc[1] == 0.85, "stays red when the game repaints it")
+local usables = b.usables
+fire("ACTION_RANGE_CHECK_UPDATE", 1, true, true)
+check(not b.kOut and b.usables == usables + 1 and b.icon.vc[1] == 1, "back in range: the game's colour again")
+fire("ACTION_RANGE_CHECK_UPDATE", 1, false, false)
+check(not b.kOut, "spells without a range never go red")
+KUIDB.barRange = false
+fire("ACTION_RANGE_CHECK_UPDATE", 1, false, true)
+check(not b.kOut, "the tint can be turned off")
+KUIDB.barRange = true
+local SM = {}
+SM.__lt = function() error("a secret value was used in Lua", 2) end
+SM.__eq = SM.__lt
+local secret = setmetatable({}, SM)
+issecretvalue = function(v) return getmetatable(v) == SM end
+local ok, err = pcall(function() fire("ACTION_RANGE_CHECK_UPDATE", 1, secret, secret) end)
+check(ok and not b.kOut, "a secret range is ignored: " .. tostring(err))
+fire("ACTION_RANGE_CHECK_UPDATE", 1, false, secret)
+check(not b.kOut, "whichever value is the secret one")
+issecretvalue = nil
+
+-- Procs
+local mgr = ActionButtonSpellAlertManager
+mgr:ShowAlert(b)
+check(mgr.alerts[b], "the game's proc glow by default")
+KUIDB.barProcs = false
+mgr:ShowAlert(b)
+check(not mgr.alerts[b], "can be turned off")
+KUIDB.barProcs = true
+local notOurs = {}
+mgr:ShowAlert(notOurs)
+KUIDB.barProcs = false
+mgr:ShowAlert(notOurs)
+check(mgr.alerts[notOurs], "leaves other buttons alone")
+KUIDB.barProcs = true
+
+-- Stance
+check(not (KUIStanceButton1 and KUIStanceButton1.shown), "no forms, no stance buttons showing")
+forms = { { icon = "bear", active = true, castable = true }, { icon = "cat", active = false, castable = false, cdStart = 5, cdDur = 10 } }
+fire("UPDATE_SHAPESHIFT_FORMS")
+local s1, s2 = KUIStanceButton1, KUIStanceButton2
+check(s1 and s2 and s1.tmpl == "StanceButtonTemplate" and s2.id == 2, "a button per form")
+check(s1.icon.tex == "bear" and s1.checked == true and s2.checked == false, "the active form is checked")
+check(s1.icon.vc[1] == 1 and s2.icon.vc[1] == 0.4, "forms you can't use are dimmed")
+check(s2.cooldown.cooldown and s2.cooldown.cooldown[2] == 10 and s1.cooldown.cleared, "form cooldowns")
+check(KUIStancebar.w == 2 * 30 + 3, "the bar fits: " .. tostring(KUIStancebar.w))
+barKeys.SHAPESHIFTBUTTON1 = { "F5" }
+fire("UPDATE_BINDINGS")
+check(s1.kKey.text == "F5", "stance keys show")
+forms[3] = { icon = "tree", castable = true }
+inCombat = true
+fire("UPDATE_SHAPESHIFT_FORMS")
+check(not KUIStanceButton3 and AB.applyPending, "a new form waits for combat to end")
+inCombat = false
+fire("PLAYER_REGEN_ENABLED")
+check(KUIStanceButton3 and KUIStancebar.w == 3 * 30 + 6, "then gets a button")
+forms[1].active, forms[2].active = false, true
+fire("UPDATE_SHAPESHIFT_FORM")
+check(s1.checked == false and s2.checked == true, "changing form moves the check")
+local secretCd = setmetatable({}, SM)
+issecretvalue = function(v) return getmetatable(v) == SM end
+forms[2].cdStart, forms[2].cdDur = secretCd, secretCd
+ok, err = pcall(function() fire("UPDATE_SHAPESHIFT_COOLDOWN") end)
+check(ok, "a secret cooldown doesn't break the bar: " .. tostring(err))
+issecretvalue = nil
+forms[2].cdStart, forms[2].cdDur = 0, 0
+
+-- Pet
+local PB = KUIPetbar
+local pb1 = PetActionButton1
+check(PB and pb1.parent == PB and PB.buttons[10] == PetActionButton10, "the game's pet buttons move to our bar")
+check(pb1.NormalTexture.parent == hidden and pb1.kKey, "dressed like the rest")
+check(stateDrivers[PB].visibility:find("%[@pet,exists,nopossessbar%]show;hide$"), "shows with a pet")
+AB:Cfg("pet").mode = "combat"
+AB:Changed("pet")
+check(stateDrivers[PB].visibility:find("%[@pet,exists,nopossessbar,combat%]show;hide$"), "and can also wait for combat")
+AB:Cfg("pet").mode = "always"
+AB:Cfg("pet").empty = false
+AB:Changed("pet")
+check(pb1.alpha == 0, "empty pet slots can hide")
+petActions[1] = "Attack"
+fire("PET_BAR_UPDATE")
+check(pb1.alpha == 1, "a filled one shows")
+AB:Cfg("pet").empty = true
+AB:Changed("pet")
+barKeys.BONUSACTIONBUTTON1 = { "CTRL-1" }
+fire("UPDATE_BINDINGS")
+check(pb1.kKey.text == "C1", "pet keys show")
+
+-- Totems, for Shamans
+local TB, T = KUITotembar, MultiCastActionBarFrame
+check(TB and T.parent == TB and T.ignoreFramePositionManager, "the totem bar moves into a kUI frame")
+check(T.scripts.OnUpdate == nil and T.points[#T.points][2] == TB, "and the game stops moving it")
+-- The game's art goes, and the buttons get ours.
+local tb1, summon, recall = MultiCastActionButton1, MultiCastSummonSpellButton, MultiCastRecallSpellButton
+check(tb1.overlayTex.parent == hidden and tb1.NormalTexture.parent == hidden, "the totem art is gone")
+check(MultiCastSlotButton1.background.parent == hidden and MultiCastSlotButton1.overlayTex.parent == hidden, "from the slots too")
+check(MultiCastRecallSpellButtonHighlight.parent == hidden, "and the spell button's frame")
+check(tb1.kEdges and summon.kEdges and recall.kEdges and tb1.kBack, "every button gets a slot and a border")
+check(tb1.icon.texCoord and tb1.icon.texCoord[1] == 0.07, "and a cropped icon")
+check(AB.mine[tb1] and AB.mine[summon], "and follows the proc and cooldown settings")
+-- Each totem's own colour.
+MultiCastActionButton_Update(tb1, 2, 1, 2)
+local earth = tb1.kEdges[1].ctex
+MultiCastActionButton_Update(tb1, 1, 1, 1)
+check(earth[1] ~= tb1.kEdges[1].ctex[1], "each element has its own border colour")
+-- Only the totems you have get a place.
+T.numActiveSlots = 4
+summon:Show()
+recall:Show()
+AB:Changed("totem")
+check(TB.w == 6 * 30 + 5 * 4 and TB.h == 30 and T.w == TB.w, "summon, four totems and recall in a row")
+check(summon.points[1][4] == 0 and tb1.points[1][4] == 34 and MultiCastSlotButton1.points[1][4] == 34, "each in its place, slot under its button")
+check(MultiCastActionButton5.points[1][4] == 34 and MultiCastActionButton9.points[1][4] == 34, "and every page lines up")
+check(MultiCastActionButton4.points[1][4] == 34 * 4, "up to the fourth")
+check(recall.points[1][1] == "LEFT" and recall.points[1][4] == 34 * 5 and recall.w == 30, "recall last")
+check(tb1.w == 30 and MultiCastSlotButton1.w == 30 and summon.w == 30, "all one size")
+T.numActiveSlots = 2
+recall:Hide()
+summon:Hide()
+AB:Changed("totem")
+check(TB.w == 2 * 30 + 4, "fewer totems, a shorter bar")
+check(MultiCastActionButton1.points[1][4] == 0, "and no gap for a spell you don't know")
+T.numActiveSlots = 0
+AB:Changed("totem")
+check(TB.w > 1 and TB.h > 1, "something to grab with no totems yet")
+-- The game's own moves don't stick, and wait for combat to end when they have to.
+T.numActiveSlots = 4
+summon:Show()
+recall:Show()
+AB:Changed("totem")
+MultiCastActionBarFrame_Update(T)
+check(#recall.points == 1 and recall.points[1][2] == T and MultiCastSlotButton1.points[1][4] == 34, "the game moving its buttons is put right")
+inCombat = true
+AB.applyPending = nil
+MultiCastSlotButton1:SetPoint("BOTTOMLEFT", T, "BOTTOMLEFT", 41, 3)
+local inFight = #MultiCastSlotButton1.points
+MultiCastActionBarFrame_Update(T)
+check(AB.applyPending and #MultiCastSlotButton1.points == inFight + 1, "in combat that waits")
+inCombat = false
+fire("PLAYER_REGEN_ENABLED")
+check(not AB.applyPending and #MultiCastSlotButton1.points == 1 and MultiCastSlotButton1.points[1][4] == 34, "and happens when combat ends")
+-- The flyout that picks totems.
+local flyButton = new("Button", nil, MultiCastFlyoutFrame)
+flyButton.icon, flyButton.spellId = flyButton:CreateTexture(), 100
+local clearButton = new("Button", nil, MultiCastFlyoutFrame)
+clearButton.icon, clearButton.spellId = clearButton:CreateTexture(), 0
+MultiCastFlyoutFrame.buttons = { clearButton, flyButton }
+MultiCastFlyoutFrame_ToggleFlyout()
+check(MultiCastFlyoutFrame.top.ctex and MultiCastFlyoutFrame.middle.ctex, "the flyout goes flat")
+check(flyButton.kEdges and flyButton.icon.texCoord[1] == 0.07, "and its buttons get ours as the game makes them")
+check(clearButton.kEdges and clearButton.icon.texCoord == nil, "leaving the empty-slot art whole")
+-- Settings
+AB:Cfg("totem").scale = 1.2
+AB:Cfg("totem").size = 40
+AB:Cfg("totem").keys = false
+AB:Cfg("totem").border = false
+AB:Cfg("totem").perRow = 3
+AB:Changed("totem")
+check(TB.scale == 1.2 and tb1.w == 40 and tb1.kKey.alpha == 0, "scale, size and text work")
+check(not tb1.kEdges[1].shown, "border too")
+check(TB.w == 3 * 40 + 2 * 4 and TB.h == 2 * 40 + 4, "and rows")
+AB:Cfg("totem").mode = "hover"
+AB:Cfg("totem").fadeTo = 0
+AB:Changed("totem")
+MultiCastFlyoutFrame:Hide()
+AB.ev.scripts.OnUpdate(AB.ev, 10)
+check(TB.alpha == 0, "it fades")
+MultiCastFlyoutFrame:Show()
+AB.ev.scripts.OnUpdate(AB.ev, 10)
+check(TB.alpha == 1, "but stays while you pick a totem")
+barKeys.MULTICASTACTIONBUTTON1 = { "CTRL-5" }
+AB:BindAll()
+check(tb1.kKey.text == "C5", "the game's own keys show")
+check(tb1.kBind == nil, "and stay the game's")
+AB:ResetBar("totem")
+local realClass = UnitClass
+UnitClass = function() return "Rogue", "ROGUE" end
+AB.list = {}
+local noTotem = true
+for _, it in ipairs(AB:List()) do if it.key == "totem" then noTotem = false end end
+check(noTotem, "no totem bar for other classes")
+UnitClass = realClass
+AB.list = {}
+
+-- Default spots above the bottom bars
+local function petY() return PB.points[#PB.points][5] end
+AB:Place(PB)
+check(petY() == 138, "pet bar above bar 3")
+AB:Cfg("bar3").on = false
+AB:Changed("bar3")
+AB:Place(PB)
+check(petY() == 99 and not Bar3.shown, "or above bar 2 when bar 3 is off")
+check(not stateDrivers[Bar3].visibility, "a bar that's off has no state driver")
+AB:Cfg("bar2").on = false
+AB:Changed("bar2")
+check(petY() == 60, "and it moves when you turn one off")
+AB:Cfg("bar2").on, AB:Cfg("bar3").on = true, true
+AB:Changed("bar2")
+AB:Changed("bar3")
+
+-- A bar that's off gives its keys back
+AB:Cfg("bar2").on = false
+AB:Changed("bar2")
+check(not boundKeys["SHIFT-Q"], "a bar that's off releases its keys")
+AB:Cfg("bar2").on = true
+AB:Changed("bar2")
+check(boundKeys["SHIFT-Q"], "and takes them again")
+
+-- Hover
+local ch = AB:Cfg("bar2")
+ch.mode, ch.alpha, ch.fadeTo = "hover", 0.9, 0.1
+AB:Changed("bar2")
+check(Bar2.alpha == 0.1 and AB.ev.scripts.OnUpdate, "hover: starts faded, and a timer runs")
+local hovering = Bar2
+local realOver = MouseIsOver
+MouseIsOver = function(f) return f == hovering end
+for _ = 1, 20 do AB.ev.scripts.OnUpdate(AB.ev, 0.05) end
+check(math.abs(Bar2.alpha - 0.9) < 1e-6, "fades in under the mouse: " .. tostring(Bar2.alpha))
+hovering = nil
+AB.ev.scripts.OnUpdate(AB.ev, 0.05)
+check(Bar2.alpha < 0.9 and Bar2.alpha > 0.1, "out again gradually")
+for _ = 1, 20 do AB.ev.scripts.OnUpdate(AB.ev, 0.05) end
+check(math.abs(Bar2.alpha - 0.1) < 1e-6, "back to faded")
+inCombat = true
+hovering = Bar2
+for _ = 1, 20 do AB.ev.scripts.OnUpdate(AB.ev, 0.05) end
+check(math.abs(Bar2.alpha - 0.9) < 1e-6, "fading works in combat")
+inCombat = false
+hovering = nil
+fire("ACTIONBAR_SHOWGRID")
+for _ = 1, 20 do AB.ev.scripts.OnUpdate(AB.ev, 0.05) end
+check(math.abs(Bar2.alpha - 0.9) < 1e-6, "a held spell wakes faded bars")
+fire("ACTIONBAR_HIDEGRID")
+MouseIsOver = realOver
+ch.mode, ch.alpha, ch.fadeTo = "always", 1, 0
+AB:Changed("bar2")
+check(Bar2.alpha == 1 and not AB.ev.scripts.OnUpdate, "no faders left: the timer stops")
+
+-- Combat
+inCombat = true
+local pts = #Bar1.points
+AB:Cfg("bar1").size = 50
+AB:Changed("bar1")
+AB:Apply(Bar1)
+AB:ApplyAll()
+check(Bar1.w == 465 and #Bar1.points == pts, "nothing secure moves in combat")
+check(AB.applyPending, "the change waits")
+AB:ResetBar("bar1")
+AB:CopyLook("bar1")
+AB:Slash("reset")
+check(AB:Cfg("bar1").size == 50, "reset and copy wait too")
+AB:Cfg("bar1").size = 36
+AB:Cfg("bar4").on = true
+AB:ApplyAll()
+check(not KUIBar4, "no new secure frames in combat")
+inCombat = false
+fire("PLAYER_REGEN_ENABLED")
+check(KUIBar4 and not AB.applyPending, "all done when combat ends")
+Bar4 = KUIBar4
+check(Bar4.w == 36 and Bar4.h == 12 * 36 + 11 * 3, "side bars run in a column")
+check(KUIBar4Button1.attrs.action == 25, "bar 4: the game's right bar slots")
+check(KUIBar4Button1.attrs.flyoutDirection == "LEFT", "column bars open flyouts sideways")
+AB:Cfg("bar4").on = false
+AB:Changed("bar4")
+
+-- Edit mode
+SlashCmdList.KUI("bars")
+check(KUIEditMode.shown and E.tab == "bars" and E.barKey == "bar1", "/kui bars opens its tab")
+check(Bar1.mover.shown and Bar2.mover.shown and PB.mover.shown, "every bar gets an overlay")
+check(not stateDrivers[Bar1].visibility and Bar1.shown and PB.shown, "bars stay shown while you edit them, even the pet bar")
+check(not E.hint.shown and E.copy.shown, "the copy button replaces the hint")
+local function row(key)
+  for _, r in ipairs(E.rows) do if r.def.key == key then return r end end
+end
+row("size"):Set(44)
+check(KUIDB.barCfg.bar1.size == 44 and b.w == 44 and Bar1.h == 44, "changing a slider changes the bar")
+check(row("size").value.text == "44", "and the row")
+row("perRow"):Set(6)
+check(Bar1.h == 2 * 44 + 3, "rows")
+row("keys"):Set(false)
+check(b.kKey.alpha == 0, "toggles")
+row("growY"):Set("down")
+check(KUIDB.barCfg.bar1.growY == "down", "choices")
+check(row("fadeTo"):Refresh() == nil and row("fadeTo").alpha == 0.45, "opacity when faded is dimmed unless hovering")
+row("mode"):Set("hover")
+check(row("fadeTo").alpha == 1, "and wakes")
+check(Bar1.alpha == 1, "bars stay solid while editing")
+row("mode"):Set("always")
+-- picking another bar
+row("bar"):Step(1)
+check(E.barKey == "bar2", "the picker moves to the next bar")
+check(row("size").value.text == "36" and row("bar").value.text == "Bar 2", "rows show that bar's settings")
+check(KUIDB.barCfg.bar2.size == 36 and KUIDB.barCfg.bar1.size == 44, "without changing either")
+row("size"):Set(30)
+check(KUIBar2Button1.w == 30 and b.w == 44, "changes go to the picked bar")
+check(Bar2.mover.fill.ctex[4] == 0.45 and Bar1.mover.fill.ctex[4] == 0.2, "its overlay stands out")
+Bar1.mover.scripts.OnMouseUp(Bar1.mover)
+check(E.barKey == "bar1" and row("bar").value.text == "Bar 1", "clicking a bar picks it")
+E:Select("player")
+Bar2.mover.scripts.OnMouseUp(Bar2.mover)
+check(E.tab == "bars" and E.barKey == "bar2", "from any tab")
+check(E.hint and not E.hint.shown, "still the bars footer")
+E:Select("player")
+check(E.hint.shown and not E.copy.shown, "other tabs keep their hint")
+E:Select("bars")
+-- turning a new bar on from the panel
+E.barKey = "bar5"
+E:RefreshPage()
+check(not KUIBar5, "bar 5 isn't made until it's wanted")
+row("size"):Set(40)
+check(not KUIBar5, "changing an off bar's settings doesn't make it either")
+row("on"):Set(true)
+check(KUIBar5 and KUIBar5.shown and KUIBar5.mover.shown and KUIBar5Button1.w == 40, "turning it on makes it, with its overlay")
+row("on"):Set(false)
+check(not KUIBar5.shown and not KUIBar5.mover.shown, "and off hides it")
+-- moving a bar
+E.barKey = "bar2"
+E:RefreshPage()
+Bar2.mover.scripts.OnDragStart(Bar2.mover)
+Bar2.mover.scripts.OnDragStop(Bar2.mover)
+check(KUIDB.barCfg.bar2.left == 300 and KUIDB.barCfg.bar2.top == 600, "dragging saves the spot")
+-- copy
+E.copy.scripts.OnClick(E.copy)
+check(KUIDB.barCfg.bar3.size == 30 and KUIDB.barCfg.pet.size == 30, "copy look: other bars match")
+check(KUIDB.barCfg.bar3.left == nil and KUIDB.barCfg.bar3.count == 12 and KUIDB.barCfg.bar3.on, "but stay where they are")
+check(KUIDB.barCfg.pet.count == 10, "and keep their own number of buttons")
+-- reset
+E.reset.scripts.OnClick(E.reset)
+check(KUIDB.barCfg.bar2.size == 36 and KUIDB.barCfg.bar2.left == nil and KUIDB.barCfg.bar2.on, "reset this bar")
+-- all bars
+b.kOut = true
+row("barRange"):Set(false)
+check(not b.kOut, "turning range off clears red icons now")
+row("barRange"):Set(true)
+-- totems have fixed buttons, and no slots to leave empty
+E.barKey = "totem"
+E:RefreshPage()
+check(row("size").alpha == 1 and row("gapX").alpha == 1 and row("scale").alpha == 1 and row("on").alpha == 1 and row("mode").alpha == 1, "the totem bar has the layout rows")
+check(row("keys").alpha == 1 and row("cdText").alpha == 1 and row("border").alpha == 1, "and text and border")
+check(row("count").alpha == 0.45 and row("empty").alpha == 0.45 and row("macro").alpha == 0.45 and row("stack").alpha == 0.45, "but not what it doesn't have")
+E.barKey = "bar1"
+E:RefreshPage()
+check(row("count").alpha == 1 and row("empty").alpha == 1, "and the others keep them")
+-- Menu and bags have a tab of their own
+E:Select("extras")
+check(E.tab == "extras" and E.extraKey == "menu", "the tab opens on the menu")
+check(not E.hint.shown and not E.copy.shown and E.keys.shown, "with quick keybinds but no copy button")
+local function erow(key)
+  for _, r in ipairs(E.pages.extras.rows) do
+    if r.def.key == key then return r end
+  end
+end
+check(erow("bar").value.text == "Menu bar", "it says which")
+check(erow("CharacterMicroButton") and erow("QuestLogMicroButton") and erow("StoreMicroButton"), "a row for each menu button")
+check(erow("HelpMicroButton") == nil, "not for help, which the game hides")
+check(erow("slots").alpha == 0.45 and erow("mono").alpha == 1 and erow("CharacterMicroButton").alpha == 1, "bag rows wait for the bag bar")
+local Menu = KUIMenubar
+erow("size"):Set(30)
+check(CharacterMicroButton.w == 30 and CharacterMicroButton.h == 30, "size works")
+check(CharacterMicroButton.normalArt.w == 30 * 1.15, "and the art follows")
+erow("perRow"):Set(2)
+check(Menu.h == 3 * 30 + 2 * 2, "rows work")
+erow("border"):Set(false)
+check(not CharacterMicroButton.kEdges[1].shown, "border works")
+erow("border"):Set(true)
+erow("mono"):Set(false)
+check(CharacterMicroButton.normalArt.desat == false, "colour icons")
+erow("mono"):Set(true)
+check(CharacterMicroButton.normalArt.desat == true, "and grey ones")
+-- Typing a value
+local sz = erow("size")
+local function typed(r, text)
+  r.value.scripts.OnEditFocusGained(r.value)
+  r.value:SetText(text)
+  r.value.scripts.OnEnterPressed(r.value)
+end
+typed(sz, "33")
+check(KUIDB.barCfg.menu.size == 33 and sz.value.text == "33" and CharacterMicroButton.w == 33, "a typed value applies")
+typed(sz, "999")
+check(KUIDB.barCfg.menu.size == 64 and sz.value.text == "64", "held to the row's limit")
+typed(sz, "-5")
+check(KUIDB.barCfg.menu.size == 16, "both ways")
+typed(sz, "27.6")
+check(KUIDB.barCfg.menu.size == 28 and sz.value.text == "28", "whole-number rows stay whole")
+typed(sz, "rat")
+check(KUIDB.barCfg.menu.size == 28 and sz.value.text == "28", "nonsense is ignored and the box goes back")
+typed(sz, "")
+check(KUIDB.barCfg.menu.size == 28 and sz.value.text == "28", "and so is nothing")
+local sc = erow("scale")
+typed(sc, "1.23")
+check(KUIDB.barCfg.menu.scale == 1.23 and sc.value.text == "1.23", "a typed value needn't land on a slider step")
+check(Menu.scale == 1.23, "and it's used")
+typed(sc, "1,5")
+check(KUIDB.barCfg.menu.scale == 1.5 and sc.value.text == "1.50", "a comma works as a decimal point")
+sc:Step(1)
+check(math.abs(KUIDB.barCfg.menu.scale - 1.55) < 0.001, "the wheel carries on from there")
+typed(sc, "1")
+-- While you type
+sz.value.scripts.OnEditFocusGained(sz.value)
+sz.value:SetText("3")
+sz:Refresh()
+check(sz.value.text == "3" and KUIDB.barCfg.menu.size == 28, "a refresh doesn't type over you")
+sz.value.scripts.OnEscapePressed(sz.value)
+check(sz.value.text == "28" and KUIDB.barCfg.menu.size == 28, "Esc puts it back")
+sz.value.scripts.OnEditFocusGained(sz.value)
+sz.value:SetText("31")
+sz.value.scripts.OnEditFocusLost(sz.value)
+check(KUIDB.barCfg.menu.size == 31, "clicking away keeps it")
+sz.value.scripts.OnEditFocusGained(sz.value)
+sz.value:SetText("40")
+sz.value.scripts.OnTabPressed(sz.value)
+check(KUIDB.barCfg.menu.size == 40, "so does Tab")
+inCombat = true
+typed(sz, "20")
+check(KUIDB.barCfg.menu.size == 40 and sz.value.text == "40", "not in combat")
+inCombat = false
+erow("size"):Set(30)
+-- Taking a button off the bar
+local widthWith = Menu.w
+erow("perRow"):Set(14)
+widthWith = Menu.w
+erow("QuestLogMicroButton"):Set(false)
+check(KUIDB.barCfg.menu.hide.QuestLogMicroButton == true and erow("QuestLogMicroButton"):Refresh() == nil, "a menu button can come off")
+check(QuestLogMicroButton.parent == hidden and Menu.w == widthWith - 32, "and the bar closes up")
+erow("QuestLogMicroButton"):Set(true)
+check(QuestLogMicroButton.parent == Menu.tray and KUIDB.barCfg.menu.hide.QuestLogMicroButton == nil and Menu.w == widthWith, "and go back")
+-- Overlay and mouse
+check(Menu.mover.shown and not CharacterMicroButton.mouseOn, "the buttons don't take clicks while editing")
+Menu.mover.scripts.OnMouseUp(Menu.mover)
+check(E.tab == "extras" and E.extraKey == "menu", "clicking the overlay opens this tab")
+local Bags = KUIBagbar
+E:Select("player")
+Bags.mover.scripts.OnMouseUp(Bags.mover)
+check(E.tab == "extras" and E.extraKey == "bags", "from anywhere, on the right bar")
+check(erow("bar").value.text == "Bag bar" and erow("slots").alpha == 1 and erow("mono").alpha == 0.45 and erow("CharacterMicroButton").alpha == 0.45, "which swaps the rows over")
+erow("slots"):Set(false)
+check(CharacterBag0Slot.parent == hidden and MainMenuBarBackpackButton.parent == Bags.tray, "backpack only")
+erow("slots"):Set(true)
+erow("keyring"):Set(false)
+check(KeyRingButton.parent == hidden, "no key ring")
+erow("keyring"):Set(true)
+erow("reagent"):Set(false)
+check(CharacterReagentBag0Slot.parent == hidden, "no reagent bag")
+erow("reagent"):Set(true)
+erow("stack"):Set(false)
+check(MainMenuBarBackpackButton.countShown == false and MainMenuBarBackpackButton.FreeSlots.alpha == 0, "no free slot count")
+erow("stack"):Set(true)
+check(MainMenuBarBackpackButton.countShown == true, "and back")
+erow("stackSize"):Set(15)
+check(MainMenuBarBackpackButton.FreeSlots.font[2] == 15, "its size")
+erow("on"):Set(false)
+check(not Bags.shown and not Bags.mover.shown, "the bag bar can go")
+erow("on"):Set(true)
+check(Bags.shown and Bags.mover.shown, "and come back")
+E.reset.scripts.OnClick(E.reset)
+check(KUIDB.barCfg.bags.stackSize == 11 and KUIDB.barCfg.bags.on, "reset this bar")
+E:Select("extras")
+E.extraKey = "menu"
+E.reset.scripts.OnClick(E.reset)
+check(KUIDB.barCfg.menu.size == 24 and next(KUIDB.barCfg.menu.hide or {}) == nil, "reset the menu")
+E:Select("bars")
+-- blocked in combat, closes in combat
+inCombat = true
+local was = KUIDB.barCfg.bar1.size
+row("size"):Set(20)
+check(KUIDB.barCfg.bar1.size == was, "no changes in combat")
+inCombat = false
+U.unlocked = nil -- as if the unit frames were switched off, so only this module can close it
+fire("PLAYER_REGEN_DISABLED")
+check(not ns.FUI.unlocked and not KUIEditMode.shown and not Bar1.mover.shown, "combat closes it")
+check(stateDrivers[Bar1].visibility, "and bars go back to their state drivers")
+AB:Slash("reset")
+check(not AB.applyPending and KUIDB.barCfg.bar1.size == 36 and KUIDB.barSeeded, "/kui bars reset")
+check(Bar1.w == 465, "and applies it")
+
+-- /kui bars debug, and turning the whole thing off
+local before = #chat
+AB:Slash("debug")
+check(#chat > before and table.concat(chat, "\n", before + 1):find("Bar 1: on, slot 1, showing", 1, true), "debug lists the bars")
+check(table.concat(chat, "\n", before + 1):find("Bar 8: not on this client", 1, true), "and says what's missing")
+SlashCmdList.KUI("bars off")
+check(KUIDB.bars == false, "/kui bars off")
+AB.enabled = false
+SlashCmdList.KUI("bars")
+check(chat[#chat]:find("/kui bars on", 1, true), "a hint while it's off")
+AB.enabled = true
+SlashCmdList.KUI("bars on")
+check(KUIDB.bars == true, "/kui bars on")
+
+-- The font follows kUI's setting; the settings window doesn't.
+local fontWas = KUIDB.font
+KUIDB.font = "chakra"
+ns.Style.ApplyFonts()
+ns.FUI:Refresh()
+check(b.kKey.font[1]:find("ChakraPetch") and b.Count.font[1]:find("ChakraPetch"), "button text follows the font")
+check(KUICooldownFontbar1.font[1]:find("ChakraPetch"), "cooldown numbers too")
+local typedBox
+for _, r in ipairs(E.pages.bars.rows) do
+  if r.def.key == "size" then typedBox = r.value end
+end
+check(typedBox.font[1]:find("Barlow") and not typedBox.font[1]:find("ChakraPetch"), "the boxes you type in stay in the settings font")
+KUIDB.font = fontWas
+ns.Style.ApplyFonts()
+ns.FUI:Refresh()
+
+-- The menu buttons
+local Menu, BagBar = KUIMenubar, KUIBagbar
+check(Menu and BagBar, "menu and bag bars are made")
+check(MicroMenuContainer.parent == hidden and BagsBar.parent == hidden, "the game's holders are put away")
+local cm = CharacterMicroButton
+check(cm.parent == Menu.tray and StoreMicroButton.parent == Menu.tray, "the buttons move onto ours")
+check(HelpMicroButton.parent == hidden, "help stays hidden while the shop is there")
+check(cm.Background.parent == hidden and cm.PushedBackground.parent == hidden, "the game's button art goes")
+check(cm.Shadow.parent == hidden and cm.PushedShadow.parent == hidden and cm.Portrait.maskRemoved == cm.PortraitMask, "and the portrait goes square")
+check(cm.Portrait.points[1][1] == "TOPLEFT" and cm.Portrait.points[1][2] == 2, "filling the button")
+check(cm.FlashBorder.ctex and cm.FlashBorder.ctex[4] == 0.35, "alerts go flat too")
+check(MainMenuMicroButton.MainMenuBarPerformanceBar.h == 2, "the latency bar becomes a thin line")
+check(Menu.w == 5 * 24 + 4 * 2 and Menu.h == 24, "a flat row of the buttons wanted")
+check(Menu.points[1][1] == "BOTTOMRIGHT", "bottom right by default")
+-- The game shows the shop every time it updates. A removed one has to stay away.
+AB:Cfg("menu").hide = { StoreMicroButton = true }
+AB:Changed("menu")
+StoreMicroButton:Show()
+check(StoreMicroButton.parent == hidden, "a removed button stays gone when the game shows it")
+AB:Cfg("menu").hide = nil
+AB:Changed("menu")
+-- Game rules can take buttons away
+microRules.ej = true
+local listed = {}
+for _, it in ipairs(AB:MenuList()) do listed[it.key] = it.name end
+check(listed.EJMicroButton == nil and listed.CharacterMicroButton == "Character", "the rows follow the game's rules")
+microRules.ej = nil
+-- The art comes back whenever a button changes state
+QuestLogMicroButton:SetPushed()
+check(QuestLogMicroButton.state == "pushed" and QuestLogMicroButton.kBack.ctex[1] == ns.Style.ACCENT[1], "an open window shows on its button")
+check(#QuestLogMicroButton.normalArt.points == 1 and QuestLogMicroButton.normalArt.points[1][1] == "CENTER", "the art stays centred")
+QuestLogMicroButton:SetNormal()
+check(QuestLogMicroButton.kBack.ctex[4] == 0.55 and QuestLogMicroButton.normalArt.points[1][1] == "CENTER", "and closes")
+cm.scripts.OnEnter(cm)
+check(cm.kEdges[1].ctex[1] == ns.Style.ACCENT[1], "hover lights the border")
+cm.scripts.OnLeave(cm)
+check(cm.kEdges[1].ctex[1] == ns.Style.SOFT[1], "and lets go")
+-- The vehicle bar borrows the buttons, even in combat
+inCombat = true
+MicroMenu:SetParent(OverrideActionBar)
+check(Menu.borrowed and cm.parent == MicroMenu and cm.w == 32 and cm.h == 40, "the vehicle bar can take them")
+AB:Changed("menu")
+check(cm.parent == MicroMenu, "nothing takes them back early")
+MicroMenu:SetParent(MicroMenuContainer)
+check(not Menu.borrowed and cm.parent == Menu.tray and cm.w == 24, "and they come back, in combat too")
+inCombat = false
+MicroMenu:SetParent(new("Frame"))
+check(Menu.borrowed, "a pet battle borrows them")
+AB:Changed("menu")
+check(cm.parent == MicroMenu, "and a change to the bar's settings leaves them there")
+fire("PET_BATTLE_CLOSE")
+check(not Menu.borrowed and cm.parent == Menu.tray, "and the end of one hands them back")
+MicroMenu.parent = MicroMenuContainer
+HelpOpenWebTicketButton.points = {}
+MicroMenu:UpdateHelpTicketButtonAnchor()
+check(HelpOpenWebTicketButton.points[1][2] == cm, "the help ticket button still has somewhere to sit")
+
+-- The bag buttons
+local bp, ring = MainMenuBarBackpackButton, KeyRingButton
+check(bp.parent == BagBar.tray and CharacterBag3Slot.parent == BagBar.tray and ring.parent == BagBar.tray, "the bag buttons move onto ours")
+check(BagBar.w == 7 * 30 + 6 * 3 and BagBar.h == 30, "seven in a row")
+check(ring.points[1][4] == 0 and CharacterReagentBag0Slot.points[1][4] == 33 and bp.points[1][4] == 33 * 6, "key ring first, backpack last")
+check(bp.art.parent == hidden and bp.IconBorder.parent == hidden and bp.icon.maskRemoved == bp.SquareMask, "the game's art goes, with its mask")
+check(bp.icon.points[1][2] == 1, "the icon sits inside the border")
+check(ring.icon.tex and ring.icon.tex:find("keyring"), "the key ring gets a square icon")
+check(bp.FreeSlots.parent == bp.kText or bp.FreeSlots.points[1][1] == "BOTTOM", "free slots along the bottom")
+-- The game redraws these whenever a bag changes
+local hi = bp:GetHighlightTexture()
+bp:UpdateTextures()
+check(hi.ctex and hi.ctex[4] == 0.16 and bp:GetPushedTexture().ctex[4] == 0.4, "bag art stays flat after the game redraws it")
+check(bp.SlotHighlightTexture.ctex[4] == 0.3, "an open bag shows")
+-- ...and lays them out when you pick up an item
+check(unregistered["MainMenuBarManager.OnExpandChanged"] == BagsBar, "picking up an item doesn't lay them out")
+bp:SetPoint("RIGHT", BagsBar, "RIGHT")
+inCombat = true
+BagsBar:Layout()
+check(bp.points[1][2] == BagBar.tray and #bp.points == 1, "and when something else does, they go straight back, in combat too")
+inCombat = false
+-- Keys that aren't on this account
+C_ActionBar.ShouldShowKeyring = function() return false end
+AB:Changed("bags")
+check(ring.parent == hidden and BagBar.w == 6 * 30 + 5 * 3, "no key ring on an account without one")
+C_ActionBar.ShouldShowKeyring = function() return true end
+AB:Changed("bags")
+-- Nothing here is secure, so these can happen in combat: buttons don't need Apply.
+check(BagBar.tray.parent == BagBar and Menu.tray.parent == Menu, "plain frames carry the buttons")
+check(not stateDrivers[Menu.tray], "with no driver of their own")
+-- Same visibility as any bar
+AB:Cfg("menu").mode = "combat"
+AB:Changed("menu")
+check(stateDrivers[Menu].visibility:find("[combat]show;hide", 1, true), "the menu can show only in combat")
+AB:ResetBar("menu")
+-- Copying a bar's look leaves these alone
+AB:Cfg("bar1").size = 50
+AB:CopyLook("bar1")
+check(AB:Cfg("menu").size == 24 and AB:Cfg("totem").size == 50, "copy look reaches the totem bar, not menu and bags")
+AB:ResetBar("bar1")
+AB:ResetBar("totem")
+for _, def in ipairs({ "bar2", "bar3", "stance", "pet" }) do AB:ResetBar(def) end
+-- A client without them
+local realMenu = MicroMenu
+MicroMenu = nil
+check(#AB:MenuList() == 0, "no menu rows without the menu")
+MicroMenu = realMenu
+-- A problem with them doesn't take the bars down
+local realDressed = AB.ApplyOne
+local realFrames = AB.frames.menu
+AB.frames.menu = nil
+AB.SetupMenu, AB.oldSetup = function() error("boom") end, AB.SetupMenu
+local chatBefore = #chat
+ok = pcall(AB.ApplyAll, AB)
+check(ok and AB.failed and AB.failed.menu, "a failed menu bar doesn't stop the others")
+check(table.concat(chat, "\n", chatBefore + 1):find("Menu bar left as the game has it", 1, true), "and says so")
+local holder = MicroMenuContainer.parent
+MicroMenuContainer.parent = UIParent
+AB:HideBlizzard()
+check(MicroMenuContainer.parent == UIParent, "and the game's menu stays out")
+MicroMenuContainer.parent = holder
+AB.SetupMenu, AB.oldSetup = AB.oldSetup, nil
+AB.failed = nil
+AB.frames.menu = realFrames
+
+-- Quick keybinds
+check(KUIBar1Button1.commandName == "ACTIONBUTTON1" and KUIBar2Button3.commandName == "MULTIACTIONBAR1BUTTON3", "the game's mode can see our action buttons")
+check(KUIBar3Button1.commandName == "MULTIACTIONBAR2BUTTON1", "on the right bars")
+check(PetActionButton1.commandName == "BONUSACTIONBUTTON1" and MultiCastActionButton2.commandName == "MULTICASTACTIONBUTTON2", "pet and totem buttons too")
+local qk, kb = QuickKeybindFrame, KUIBar1Button1
+for _, btn in ipairs({ kb, cm, bp }) do btn.QuickKeybindHighlightTexture = btn:CreateTexture() end
+bp.commandName, cm.commandName = "TOGGLEBACKPACK", "TOGGLECHARACTER0"
+local glow = kb.QuickKeybindHighlightTexture
+glow.shown = false
+AB:Cfg("bar1").empty = false
+AB:Cfg("bar2").mode = "combat"
+AB:Changed("bar1")
+AB:Changed("bar2")
+check(KUIBar1Button5.alpha == 0 and stateDrivers[KUIBar2].visibility, "an empty slot and a combat-only bar, before")
+SettingsPanel.shown = false
+ns.FUI:SetUnlocked(true)
+chat[#chat + 1] = ""
+inCombat = true
+AB:QuickKeys()
+check(not qk.shown and chat[#chat]:find("in combat", 1, true), "it won't open in combat")
+inCombat = false
+AB:QuickKeys()
+check(qk.shown and not ns.FUI.unlocked and not KUIEditMode.shown, "it opens the game's mode, closing the edit mode")
+check(AB.quick and AB.quickOpened == "edit", "and remembers where it came from")
+check(glow.shown and glow.ctex[1] == ns.Style.ACCENT[1], "our buttons light up, flat")
+check(cm.QuickKeybindHighlightTexture.shown and bp.QuickKeybindHighlightTexture.shown, "menu and bag buttons too")
+check(KUIBar1Button5.alpha == 1, "empty slots show, to be bound")
+check(not stateDrivers[KUIBar2].visibility and KUIBar2.shown, "and every bar stays up")
+check(not KUIBar2.mover.shown, "with no overlays in the way")
+AB:Cfg("bar3").mode = "hover"
+AB:Cfg("bar3").fadeTo = 0
+AB:Changed("bar3")
+AB.ev.scripts.OnUpdate(AB.ev, 10)
+check(KUIBar3.alpha == 1, "and a faded bar wakes")
+AB:ResetBar("bar3")
+-- A new key shows at once
+barKeys.ACTIONBUTTON1 = { "ALT-3" }
+fire("UPDATE_BINDINGS")
+check(kb.kKey.text == "A3" and boundKeys["ALT-3"] and boundKeys["ALT-3"].name == "KUIBar1Button1Key", "a new key shows and works straight away")
+qk:Hide()
+check(not AB.quick and not glow.shown, "closing it puts the lights out")
+check(not SettingsPanel.shown, "the game's settings don't pop up")
+check(ns.FUI.unlocked and KUIEditMode.shown, "and it's back in the edit mode")
+ns.FUI:SetUnlocked(false)
+check(KUIBar1Button5.alpha == 0 and stateDrivers[KUIBar2].visibility, "and the bars go back to how you set them")
+AB:QuickKeys()
+qk:Hide()
+check(not ns.FUI.unlocked, "opened from the world, it goes back to the world")
+SlashCmdList.KUI("keys")
+check(qk.shown, "/kui keys")
+-- Combat closes it
+fire("PLAYER_REGEN_DISABLED")
+check(qk.cancelled and not qk.shown and not AB.quick and chat[#chat]:find("in combat", 1, true), "entering combat closes it")
+qk.cancelled = nil
+-- Opened from the game's own settings, the game's way of closing stands
+SettingsPanel.shown = false
+qk:Show()
+check(AB.quick and glow.shown and not AB.quickOpened, "opened from the game's settings, ours still light up")
+qk:Hide()
+check(SettingsPanel.shown, "and its settings come back")
+SettingsPanel.shown = false
+local realQk = QuickKeybindFrame
+QuickKeybindFrame = nil
+AB:QuickKeys()
+check(chat[#chat]:find("aren't on this client", 1, true), "a client without it says so")
+QuickKeybindFrame = realQk
+AB:Cfg("bar1").empty = true
+AB:Cfg("bar2").mode = "always"
+AB:Changed("bar1")
+AB:Changed("bar2")
+
+-- If kUI's bars can't be built, the game's stay.
+local mb = MultiBar6
+local oldParent = new("Frame")
+mb.parent = oldParent
+local realApply, realEv = AB.ApplyAll, AB.ev
+AB.ApplyAll = function() error("boom") end
+ok = pcall(AB.Start, AB)
+check(not ok and mb.parent == oldParent, "a failure leaves the game's bars in place")
+AB.ApplyAll, AB.ev = realApply, realEv
 end)()
 
 -- A /reload in combat waits, because secure frames can't be made then.

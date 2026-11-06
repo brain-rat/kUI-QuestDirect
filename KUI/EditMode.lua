@@ -1,8 +1,8 @@
 -- kUI · Edit mode
--- /kui edit, or the minimap icon: every unit frame and the castbar get a drag
--- overlay, and a settings window opens with a tab for each. Click a frame to jump
--- to its tab. Changes apply as you make them and are saved straight away. Done, Esc
--- or entering combat closes it, because secure frames can't be resized in combat.
+-- /kui edit, or the minimap icon: every unit frame, the castbar, each action bar and the
+-- menu and bag buttons get a drag overlay, and a settings window opens with a tab for each. Click a frame
+-- to jump to its tab. Changes apply as you make them and are saved straight away. Done,
+-- Esc or entering combat closes it, because secure frames can't be resized in combat.
 
 local _, ns = ...
 local FUI, S = ns.FUI, ns.Style
@@ -10,7 +10,7 @@ local FUI, S = ns.FUI, ns.Style
 local E = { pages = {}, tabs = {}, rows = {} }
 ns.EditMode = E
 
-local COL_W, GAP, HEAD, TAB_H, FOOT = 272, 8, 28, 26, 38
+local COL_W, GAP, HEAD, TAB_H, FOOT = 340, 8, 28, 26, 38
 local WIDTH = COL_W * 2 + GAP * 3
 local floor, max = math.floor, math.max
 local A = S.ACCENT
@@ -118,12 +118,134 @@ local function CastSections()
   }
 end
 
+local GROW_X = { { key = "right", name = "Right" }, { key = "left", name = "Left" } }
+local GROW_Y = { { key = "up", name = "Up" }, { key = "down", name = "Down" } }
+local BAR_MODES = {
+  { key = "always", name = "Always" }, { key = "hover", name = "Hover" },
+  { key = "combat", name = "In combat" }, { key = "peace", name = "No combat" },
+}
+
+-- One page for all the bars. The first row picks which bar the rest of it changes.
+local function BarSections()
+  local function c() return ns.ActionBars:Cfg(E.barKey) end
+  -- The totem bar has fixed buttons, no empty slots to hide, no macros and no stacks.
+  local function slots() return E.barKey ~= "totem" end
+  local function on(key) return function() return c()[key] end end
+  local function slotted(key) return function() return slots() and c()[key] end end
+  local function button(def)
+    def.when = def.when or slots
+    return def
+  end
+  return {
+    {
+      title = "Bar",
+      { kind = "cycle", stepper = true, label = "Editing", key = "bar", store = "pick",
+        list = function() return ns.ActionBars:List() end },
+      { kind = "toggle", label = "Show this bar", key = "on" },
+    },
+    {
+      title = "Layout",
+      button({ kind = "step", label = "Buttons", key = "count", min = 1, max = 12, step = 1 }),
+      { kind = "step", label = "Buttons per row", key = "perRow", min = 1, max = 12, step = 1 },
+      { kind = "step", label = "Button size", key = "size", min = 16, max = 64, step = 1 },
+      { kind = "step", label = "Gap across", key = "gapX", min = 0, max = 24, step = 1 },
+      { kind = "step", label = "Gap between rows", key = "gapY", min = 0, max = 24, step = 1 },
+      { kind = "step", label = "Scale", key = "scale", min = 0.5, max = 2, step = 0.05, fmt = "%.2f" },
+      { kind = "cycle", label = "Fill rows to the", key = "growX", list = GROW_X },
+      { kind = "cycle", label = "Add rows going", key = "growY", list = GROW_Y },
+    },
+    {
+      title = "When it shows",
+      { kind = "cycle", label = "Show", key = "mode", list = BAR_MODES, segWidth = 216 },
+      { kind = "step", label = "Opacity", key = "alpha", min = 0.1, max = 1, step = 0.05, fmt = "%.2f" },
+      { kind = "step", label = "Opacity when faded", key = "fadeTo", min = 0, max = 1, step = 0.05, fmt = "%.2f",
+        when = function() return c().mode == "hover" end },
+      button({ kind = "toggle", label = "Empty slots", key = "empty" }),
+    },
+    {
+      title = "Text",
+      { kind = "toggle", label = "Key bindings", key = "keys" },
+      { kind = "step", label = "Key size", key = "keySize", min = 7, max = 24, step = 1, when = on("keys") },
+      button({ kind = "toggle", label = "Macro names", key = "macro" }),
+      { kind = "step", label = "Macro size", key = "macroSize", min = 7, max = 24, step = 1, when = slotted("macro") },
+      button({ kind = "toggle", label = "Stack counts", key = "stack" }),
+      { kind = "step", label = "Stack size", key = "stackSize", min = 7, max = 24, step = 1, when = slotted("stack") },
+    },
+    {
+      title = "Cooldowns and border",
+      { kind = "toggle", label = "Cooldown numbers", key = "cdText" },
+      { kind = "step", label = "Number size", key = "cdSize", min = 8, max = 32, step = 1, when = on("cdText") },
+      { kind = "toggle", label = "Border", key = "border" },
+    },
+    {
+      title = "All bars",
+      { kind = "toggle", label = "Red icons out of range", key = "barRange", store = "db" },
+      { kind = "toggle", label = "Glow when a spell procs", key = "barProcs", store = "db" },
+    },
+    Global(),
+  }
+end
+
+-- The menu and bag buttons: laid out like a bar, with their own choices of what's on it.
+local function ExtraSections()
+  local function c() return ns.ActionBars:Cfg(E.extraKey) end
+  local function isMenu() return E.extraKey == "menu" end
+  local function isBags() return E.extraKey == "bags" end
+  local menu = { title = "Menu buttons" }
+  for _, item in ipairs(ns.ActionBars:MenuList()) do
+    menu[#menu + 1] = { kind = "toggle", label = item.name, key = item.key, store = "menuButton", when = isMenu }
+  end
+  return {
+    {
+      title = "Bar",
+      { kind = "cycle", stepper = true, label = "Editing", key = "bar", store = "pick",
+        list = function() return ns.ActionBars:List(true) end },
+      { kind = "toggle", label = "Show this bar", key = "on" },
+    },
+    {
+      title = "Layout",
+      { kind = "step", label = "Buttons per row", key = "perRow", min = 1, max = 14, step = 1 },
+      { kind = "step", label = "Button size", key = "size", min = 16, max = 64, step = 1 },
+      { kind = "step", label = "Gap across", key = "gapX", min = 0, max = 24, step = 1 },
+      { kind = "step", label = "Gap between rows", key = "gapY", min = 0, max = 24, step = 1 },
+      { kind = "step", label = "Scale", key = "scale", min = 0.5, max = 2, step = 0.05, fmt = "%.2f" },
+      { kind = "cycle", label = "Fill rows to the", key = "growX", list = GROW_X },
+      { kind = "cycle", label = "Add rows going", key = "growY", list = GROW_Y },
+    },
+    {
+      title = "When it shows",
+      { kind = "cycle", label = "Show", key = "mode", list = BAR_MODES, segWidth = 216 },
+      { kind = "step", label = "Opacity", key = "alpha", min = 0.1, max = 1, step = 0.05, fmt = "%.2f" },
+      { kind = "step", label = "Opacity when faded", key = "fadeTo", min = 0, max = 1, step = 0.05, fmt = "%.2f",
+        when = function() return c().mode == "hover" end },
+    },
+    {
+      title = "Look",
+      { kind = "toggle", label = "Border", key = "border" },
+      { kind = "toggle", label = "Grey menu icons", key = "mono", when = isMenu },
+      { kind = "toggle", label = "Free bag slots", key = "stack", when = isBags },
+      { kind = "step", label = "Free slots size", key = "stackSize", min = 7, max = 24, step = 1,
+        when = function() return isBags() and c().stack end },
+    },
+    {
+      title = "Bags",
+      { kind = "toggle", label = "Bag slots", key = "slots", when = isBags },
+      { kind = "toggle", label = "Reagent bag", key = "reagent", when = isBags },
+      { kind = "toggle", label = "Key ring", key = "keyring", when = isBags },
+    },
+    menu,
+    Global(),
+  }
+end
+
 local TABS = {
   { key = "player", label = "Player", needs = "UnitFrames" },
   { key = "target", label = "Target", needs = "UnitFrames" },
   { key = "tot", label = "Target of target", needs = "UnitFrames", wide = true },
   { key = "pet", label = "Pet", needs = "UnitFrames" },
   { key = "cast", label = "Castbar", needs = "Castbar" },
+  { key = "bars", label = "Action bars", needs = "ActionBars" },
+  { key = "extras", label = "Menu & bags", needs = "ActionBars" },
 }
 
 ------------------------------------------------------------------------
@@ -169,6 +291,54 @@ local function IO(tab)
   return io
 end
 
+-- The bars tab and the menu and bags tab work the same way, with a bar picked on each.
+local function BarIO(pick)
+  local io = {}
+  local function hidden()
+    local c = ns.ActionBars:Cfg("menu")
+    c.hide = c.hide or {}
+    return c.hide
+  end
+  function io.blocked() return InCombatLockdown() end
+  function io.get(def)
+    if def.store == "pick" then return E[pick] end
+    if def.store == "db" then return ns.db[def.key] end
+    if def.store == "menuButton" then return not hidden()[def.key] end
+    return ns.ActionBars:Cfg(E[pick])[def.key]
+  end
+  function io.set(def, v)
+    if def.store == "pick" then
+      E[pick] = v
+    elseif def.store == "db" then
+      ns.db[def.key] = v
+    elseif def.store == "menuButton" then
+      hidden()[def.key] = (not v) or nil
+    else
+      ns.ActionBars:Cfg(E[pick])[def.key] = v
+    end
+  end
+  function io.changed(def)
+    local AB = ns.ActionBars
+    if def.key == "font" then
+      S.ApplyFonts()
+      FUI:Refresh()
+    elseif def.key == "alpha" and def.store == "db" then
+      FUI:Refresh()
+    elseif def.key == "barRange" then
+      if not ns.db.barRange then
+        for _, b in ipairs(AB.buttons) do AB:SetRange(b, true, true) end
+      end
+    elseif def.key == "barProcs" then
+      -- the next proc follows the setting
+    elseif def.store ~= "pick" then
+      AB:Changed(E[pick])
+    end
+    E:Mark()
+    E:RefreshPage()
+  end
+  return io
+end
+
 ------------------------------------------------------------------------
 -- A page of cards, in two columns
 ------------------------------------------------------------------------
@@ -180,9 +350,18 @@ function E:Page(tab)
   page = { frame = CreateFrame("Frame", nil, p), rows = {} }
   page.frame:SetPoint("TOPLEFT", p, "TOPLEFT", 0, -(HEAD + TAB_H + GAP))
   page.frame:SetPoint("TOPRIGHT", p, "TOPRIGHT", 0, -(HEAD + TAB_H + GAP))
-  local io = IO(tab)
+  local io = tab == "bars" and BarIO("barKey") or tab == "extras" and BarIO("extraKey") or IO(tab)
   local heights = { 0, 0 }
-  local sections = tab == "cast" and CastSections() or FrameSections(tab)
+  local sections
+  if tab == "bars" then
+    sections = BarSections()
+  elseif tab == "extras" then
+    sections = ExtraSections()
+  elseif tab == "cast" then
+    sections = CastSections()
+  else
+    sections = FrameSections(tab)
+  end
   for _, sec in ipairs(sections) do
     local col = heights[2] < heights[1] and 2 or 1 -- the shorter column
     local card = S.Card(page.frame, sec.title, COL_W)
@@ -212,10 +391,24 @@ function E:Mark()
   end
   for key, f in pairs(U.frames) do paint(f, key == self.tab) end
   paint(C.player, self.tab == "cast")
+  ns.ActionBars:Mark(self.tab == "bars" and self.barKey or self.tab == "extras" and self.extraKey or nil)
+end
+
+-- Clicking a bar's overlay shows that bar's settings.
+function E:PickBar(key)
+  if ns.ActionBars:Def(key).extra then
+    self.extraKey = key
+    self:Select("extras")
+  else
+    self.barKey = key
+    self:Select("bars")
+  end
 end
 
 function E:Select(tab)
   self.tab = tab
+  if tab == "bars" then self.barKey = self.barKey or "bar1" end
+  if tab == "extras" then self.extraKey = self.extraKey or ns.ActionBars:List(true)[1].key end
   for key, page in pairs(self.pages) do
     if key ~= tab then page.frame:Hide() end
   end
@@ -234,12 +427,20 @@ function E:Select(tab)
     b.line:SetShown(on)
     b.fillTex:SetShown(on)
   end
+  local bars = tab == "bars" or tab == "extras"
+  self.copy:SetShown(tab == "bars")
+  self.keys:SetShown(bars)
+  self.hint:SetShown(not bars)
   self:Mark()
 end
 
 function E:Reset()
   if InCombatLockdown() then return end
-  if self.tab == "cast" then
+  if self.tab == "bars" then
+    ns.ActionBars:ResetBar(self.barKey)
+  elseif self.tab == "extras" then
+    ns.ActionBars:ResetBar(self.extraKey)
+  elseif self.tab == "cast" then
     ns.Castbar:Reset()
   else
     ns.UnitFrames:ResetFrame(self.tab)
@@ -321,7 +522,15 @@ function E:Build()
   hint:SetPoint("RIGHT", done, "LEFT", -6, 0)
   hint:SetText("Drag a frame to move it. Click one to change it.")
   hint:SetTextColor(0.6, 0.63, 0.68)
-  self.done, self.reset = done, reset
+  local copy = S.PillButton(p, "Copy look to all bars", 140, function()
+    ns.ActionBars:CopyLook(E.barKey)
+    E:RefreshPage()
+  end, false, "Gives every other bar this bar's size, gaps, scale, text and visibility")
+  copy:SetPoint("LEFT", reset, "RIGHT", 6, 0)
+  local keys = S.PillButton(p, "Quick keybinds", 110, function() ns.ActionBars:QuickKeys() end, false,
+    "Hover a button and press a key to bind it")
+  keys:SetPoint("RIGHT", done, "LEFT", -6, 0)
+  self.done, self.reset, self.copy, self.hint, self.keys = done, reset, copy, hint, keys
 
   p:SetScript("OnHide", function()
     if FUI.unlocked then FUI:SetUnlocked(false) end
@@ -341,7 +550,7 @@ end
 
 function E:SetShown(on)
   if on then
-    if not (ns.UnitFrames.enabled or ns.Castbar.enabled) then return end
+    if not (ns.UnitFrames.enabled or ns.Castbar.enabled or ns.ActionBars.enabled) then return end
     self:Build()
     local p = self.panel
     p:ClearAllPoints()
