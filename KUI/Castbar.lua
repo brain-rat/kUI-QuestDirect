@@ -101,20 +101,36 @@ local function Running(f)
   end
 end
 
+local function HasText(v)
+  if S.IsSecret(v) then return true end
+  return v ~= nil and v ~= ""
+end
+
+-- What to show on the bar. The game's display name comes first, as on its own bar:
+-- some casts, like opening a chest, may not have a usable plain name.
+local function CastText(display, name, spellID, channel)
+  if HasText(display) then return display end
+  if HasText(name) then return name end
+  local id = S.Safe(spellID)
+  local spell = id and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id)
+  if HasText(spell) then return spell end
+  return channel and "Channelling" or "Casting"
+end
+
 -- Read the unit's cast or channel from the game. False if there isn't one.
 function C:Read(f)
   local u = f.unit
-  local name, _, tex, st, en, _, guid, locked = UnitCastingInfo(u)
+  local name, display, tex, st, en, _, guid, locked, spellID = UnitCastingInfo(u)
   local channel = false
-  if not Present(name) then
-    name, _, tex, st, en, _, locked = UnitChannelInfo(u)
+  if not (Present(name) or Present(display)) then
+    name, display, tex, st, en, _, locked, spellID = UnitChannelInfo(u)
     guid, channel = nil, true
-    if not Present(name) then return false end
+    if not (Present(name) or Present(display)) then return false end
   end
   f.sample = nil
   f.mode = channel and "channel" or "cast"
   f.guid = S.Safe(guid)
-  f.label:SetText(name)
+  f.label:SetText(CastText(display, name, spellID, channel))
   f.icon:SetTexture(tex)
   Paint(f, locked, channel and CHANNEL or S.ACCENT)
   local s, e = S.Safe(st), S.Safe(en)

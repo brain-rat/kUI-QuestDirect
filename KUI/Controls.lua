@@ -80,7 +80,7 @@ end
 ------------------------------------------------------------------------
 
 local function BuildSlider(r, def)
-  r.value = S.Text(r, nil, "RIGHT", nil, 12)
+  r.value = S.UIText(r, nil, "RIGHT", nil, 12)
   r.value:SetPoint("RIGHT", -8, 0)
   r.value:SetWidth(36)
   local sl = CreateFrame("Slider", nil, r)
@@ -132,7 +132,7 @@ local function BuildSegments(r, def, width)
   local w = total / #list
   r.segments = {}
   for i, it in ipairs(list) do
-    local b = S.Button(r, it.name, w, function() r:Set(it.key) end)
+    local b = S.UIButton(r, it.name, w, function() r:Set(it.key) end)
     b:SetHeight(18)
     b:SetPoint("RIGHT", r, "RIGHT", -8 - (#list - i) * w, 0)
     S.SetFont(b.text, 11)
@@ -148,12 +148,12 @@ local function BuildSegments(r, def, width)
 end
 
 local function BuildStepper(r)
-  r.plus = S.Button(r, ">", 20, function() r:Step(1) end)
+  r.plus = S.UIButton(r, ">", 20, function() r:Step(1) end)
   r.plus:SetPoint("RIGHT", -6, 0)
-  r.value = S.Text(r, nil, "CENTER", nil, 12)
+  r.value = S.UIText(r, nil, "CENTER", nil, 12)
   r.value:SetPoint("RIGHT", r.plus, "LEFT", 0, 0)
   r.value:SetWidth(112)
-  r.minus = S.Button(r, "<", 20, function() r:Step(-1) end)
+  r.minus = S.UIButton(r, "<", 20, function() r:Step(-1) end)
   r.minus:SetPoint("RIGHT", r.value, "LEFT", 0, 0)
 end
 
@@ -213,7 +213,7 @@ function S.Row(parent, def, width, io)
   r:SetSize(width, ROW_H)
   r.def, r.io = def, io
   for k, fn in pairs(Row) do r[k] = fn end
-  r.label = S.Text(r, nil, "LEFT", nil, 12)
+  r.label = S.UIText(r, nil, "LEFT", nil, 12)
   r.label:SetPoint("LEFT", 9, 0)
   r.label:SetText(def.label)
   r.label:SetTextColor(0.85, 0.86, 0.88)
@@ -243,7 +243,7 @@ function S.Card(parent, title, width)
   fill:SetAllPoints()
   fill:SetColorTexture(1, 1, 1, 0.025)
   S.ColorEdges(S.Edges(c, "BACKGROUND", -4), S.SOFT[1], S.SOFT[2], S.SOFT[3], 0.8)
-  c.title = S.Text(c, nil, "LEFT", nil, 12)
+  c.title = S.UIText(c, nil, "LEFT", nil, 12)
   c.title:SetPoint("TOPLEFT", 9, -5)
   c.title:SetText(title)
   c.title:SetTextColor(A[1], A[2], A[3])
@@ -260,7 +260,7 @@ end
 
 -- A bordered button. primary: filled with the accent colour.
 function S.PillButton(parent, label, width, onClick, primary, tip)
-  local b = S.Button(parent, label, width, onClick, tip)
+  local b = S.UIButton(parent, label, width, onClick, tip)
   b:SetHeight(22)
   b.bg = S.Tex(b, "BACKGROUND")
   b.bg:SetAllPoints()
@@ -282,11 +282,11 @@ function S.TitleBar(parent, subtitle, height)
   line:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -1, -height)
   line:SetHeight(1)
   line:SetColorTexture(A[1], A[2], A[3], 0.55)
-  local brand = S.Text(parent, nil, "LEFT", "OVERLAY", 15)
+  local brand = S.UIText(parent, nil, "LEFT", "OVERLAY", 15)
   brand:SetPoint("TOPLEFT", 9, -(height - 15) / 2)
   brand:SetText("kUI")
   brand:SetTextColor(A[1], A[2], A[3])
-  local sub = S.Text(parent, nil, "LEFT", "OVERLAY", 13)
+  local sub = S.UIText(parent, nil, "LEFT", "OVERLAY", 13)
   sub:SetPoint("LEFT", brand, "RIGHT", 7, 0)
   sub:SetText(subtitle)
   sub:SetTextColor(0.78, 0.8, 0.84)

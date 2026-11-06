@@ -276,7 +276,7 @@ function E:Build()
     p:StopMovingOrSizing()
     ns.db.editLeft, ns.db.editTop = floor(p:GetLeft() + 0.5), floor(p:GetTop() + 0.5)
   end)
-  local x = S.Button(header, "x", 22, function() FUI:SetUnlocked(false) end, "Close the edit mode")
+  local x = S.UIButton(header, "x", 22, function() FUI:SetUnlocked(false) end, "Close the edit mode")
   x:SetPoint("RIGHT", -3, 0)
 
   -- Tabs for the parts that are switched on. A long name gets more room.
@@ -291,7 +291,7 @@ function E:Build()
   local left = 1
   for i, t in ipairs(shown) do
     local w = unit * (t.wide and 1.7 or 1)
-    local b = S.Button(p, t.label, w, function() E:Select(t.key) end)
+    local b = S.UIButton(p, t.label, w, function() E:Select(t.key) end)
     b:SetHeight(TAB_H - 1)
     b:SetPoint("TOPLEFT", p, "TOPLEFT", left, -(HEAD + 1))
     b.tab = t.key
@@ -316,7 +316,7 @@ function E:Build()
   reset:SetPoint("BOTTOMLEFT", GAP, GAP)
   local done = S.PillButton(p, "Done", 80, function() FUI:SetUnlocked(false) end, true)
   done:SetPoint("BOTTOMRIGHT", -GAP, GAP)
-  local hint = S.Text(p, nil, "CENTER", nil, 12)
+  local hint = S.UIText(p, nil, "CENTER", nil, 12)
   hint:SetPoint("LEFT", reset, "RIGHT", 6, 0)
   hint:SetPoint("RIGHT", done, "LEFT", -6, 0)
   hint:SetText("Drag a frame to move it. Click one to change it.")

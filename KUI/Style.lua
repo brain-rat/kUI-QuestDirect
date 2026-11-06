@@ -84,9 +84,26 @@ function S.Font(key)
 end
 
 local registered = {}
+local fixed = {}
+local FIXED_FONT = FONT_DIR .. "Barlow-SemiBold.ttf"
+
+local function SetFixed(fs, size, flags)
+  local ok = pcall(fs.SetFont, fs, FIXED_FONT, size, flags or "")
+  if not ok or (fs.GetFont and not fs:GetFont()) then
+    pcall(fs.SetFont, fs, "Fonts\\FRIZQT__.TTF", size, flags or "")
+  end
+end
+
+-- Settings windows stay in one font, whatever font the rest of kUI is set to.
+function S.FixFont(fs, size, flags)
+  registered[fs] = nil
+  fixed[fs] = true
+  SetFixed(fs, size, flags)
+end
 
 -- Set a font string to the kUI font at this size (and outline flags).
 function S.SetFont(fs, size, flags)
+  if fixed[fs] then return SetFixed(fs, size, flags) end
   registered[fs] = { size, flags }
   local f = S.Font()
   local ok = pcall(fs.SetFont, fs, f.path, size, flags or "")
@@ -118,6 +135,13 @@ function S.Text(parent, template, justify, layer, size, flags)
   fs:SetJustifyH(justify or "LEFT")
   fs:SetWordWrap(false)
   if size then S.SetFont(fs, size, flags) end
+  return fs
+end
+
+-- Text for settings windows: never follows the font setting.
+function S.UIText(parent, template, justify, layer, size, flags)
+  local fs = S.Text(parent, template, justify, layer)
+  S.FixFont(fs, size or 12, flags)
   return fs
 end
 
@@ -193,6 +217,13 @@ function S.Button(parent, label, width, onClick, tip)
   return b
 end
 
+-- The same button for settings windows.
+function S.UIButton(parent, label, width, onClick, tip)
+  local b = S.Button(parent, label, width, onClick, tip)
+  S.FixFont(b.text, 12)
+  return b
+end
+
 -- Flat status bar with a faint track behind it.
 function S.Bar(parent)
   local b = CreateFrame("StatusBar", nil, parent)
@@ -222,7 +253,7 @@ function S.Mover(f, label, onStop)
   fill:SetColorTexture(S.ACCENT[1], S.ACCENT[2], S.ACCENT[3], 0.25)
   m.fill = fill
   S.ColorEdges(S.Edges(m, "OVERLAY", 6), S.ACCENT[1], S.ACCENT[2], S.ACCENT[3], 1)
-  m.label = S.Text(m, "GameFontHighlightSmall", "CENTER", "OVERLAY", 12, "OUTLINE")
+  m.label = S.UIText(m, "GameFontHighlightSmall", "CENTER", "OVERLAY", 12, "OUTLINE")
   m.label:SetDrawLayer("OVERLAY", 7)
   m.label:SetPoint("CENTER")
   m.label:SetText(label)

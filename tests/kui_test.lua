@@ -48,7 +48,8 @@ function Mock:SetFrameLevel(l) self.flevel = l end
 function Mock:IsObjectType(k) return self.kind == k end
 function Mock:GetRegions() return unpack(self.regions) end
 function Mock:CreateTexture(_, layer) local t = new("Texture", nil, self); t.layer = layer; table.insert(self.regions, t); return t end
-function Mock:CreateFontString() local t = new("FontString", nil, self); t.text = ""; return t end
+allFontStrings = {}
+function Mock:CreateFontString() local t = new("FontString", nil, self); t.text = ""; allFontStrings[#allFontStrings + 1] = t; return t end
 function Mock:RegisterEvent(e) self.events[e] = true; eventFrames[e] = eventFrames[e] or {}; table.insert(eventFrames[e], self) end
 function Mock:UnregisterEvent(e) self.events[e] = nil; for i, f in ipairs(eventFrames[e] or {}) do if f == self then table.remove(eventFrames[e], i) break end end end
 function Mock:SetMaskTexture(t) self.mask = t end
@@ -266,8 +267,8 @@ local unitApi = {
   SetRaidTargetIconTexture = function(t, i) t.raidIndex = i end,
   GetComboPoints = function() return combo end,
   IsResting = function() return UNITS and UNITS.resting end,
-  UnitCastingInfo = function(u) local c = castInfo[u]; if c then return c.name, c.name, c.icon, c.st, c.en, false, c.guid, c.locked, 1 end end,
-  UnitChannelInfo = function(u) local c = chanInfo[u]; if c then return c.name, c.name, c.icon, c.st, c.en, false, c.locked, 1 end end,
+  UnitCastingInfo = function(u) local c = castInfo[u]; if c then local d = c.display; if d == nil then d = c.name end; return c.name, d, c.icon, c.st, c.en, false, c.guid, c.locked, c.spellID end end,
+  UnitChannelInfo = function(u) local c = chanInfo[u]; if c then local d = c.display; if d == nil then d = c.name end; return c.name, d, c.icon, c.st, c.en, false, c.locked, c.spellID end end,
   BreakUpLargeNumbers = function(v) if issecretvalue and issecretvalue(v) then return v end; return tostring(v) end,
 }
 unitApi.UnitGUID = function(u) return u end
@@ -845,14 +846,15 @@ fire("MERCHANT_CLOSED")
 BAGS[0][10] = nil
 
 print("== Fonts redraw")
-local lbl = KUIBagSettings.rows[1].label
+local lbl = KUILoot.title
+local lblText = lbl.text
 lbl.redraws = 0
 local oldSet = lbl.SetText
 lbl.SetText = function(self, t) self.redraws = self.redraws + 1; oldSet(self, t) end
 SlashCmdList.KUI("font rajdhani")
-check(lbl.font[1]:find("Rajdhani") and lbl.redraws >= 1 and lbl.text == "Columns", "settings text redrawn in the new font")
+check(lbl.font[1]:find("Rajdhani") and lbl.redraws >= 1 and lbl.text == lblText, "text redrawn in the new font")
 SlashCmdList.KUI("font barlow")
-check(lbl.font[1]:find("Barlow") and lbl.text == "Columns", "and back again")
+check(lbl.font[1]:find("Barlow") and lbl.text == lblText, "and back again")
 
 print("== Settings")
 SlashCmdList.KUI("alpha 0.5")
@@ -1990,6 +1992,115 @@ fire("ADDON_ACTION_FORBIDDEN", "KUI", "SetRaidTarget()")
 check(chat[#chat]:find("SetRaidTarget", 1, true) and chat[#chat]:find("in combat"), "forbidden too, and whether it was in combat")
 inCombat = false
 KUIDB.blockedLog = nil
+end)()
+
+;(function()
+print("== Settings windows keep their font")
+local E, St = ns.EditMode, ns.Style
+local function inside(fs, root)
+  local p = fs.parent
+  while p do
+    if p == root then return true end
+    p = p.parent
+  end
+end
+local function strays(root)
+  local bad = {}
+  for _, fs in ipairs(allFontStrings) do
+    if inside(fs, root) and not (fs.font and fs.font[1]:find("Barlow%-SemiBold")) then
+      bad[#bad + 1] = tostring(fs.text)
+    end
+  end
+  return #bad, table.concat(bad, ", ")
+end
+-- Open everything once so it all exists.
+SlashCmdList.KUI("edit")
+for _, b in ipairs(E.tabs) do E:Select(b.tab) end
+KUIMinimapButton.scripts.OnClick(KUIMinimapButton)
+ns.Bags:Slash("")
+-- Change the font the way the panel does it.
+E:Select("player")
+local fontRow
+for _, r in ipairs(E.rows) do if r.def.key == "font" then fontRow = r end end
+fontRow.io.set(fontRow.def, "rajdhani")
+fontRow.io.changed(fontRow.def)
+check(KUIDB.font == "rajdhani", "font changed")
+check(KUIPlayerFrame.name.font[1]:find("Rajdhani"), "the frames follow it")
+check(KUIPlayerFrame.hpText.font[1]:find("Rajdhani"), "and their numbers")
+check(KUILoot.title.font[1]:find("Rajdhani"), "and other kUI windows")
+local n, what = strays(KUIEditMode)
+check(n == 0, "the edit mode window doesn't: " .. what)
+n, what = strays(KUIMenu)
+check(n == 0, "the minimap menu doesn't: " .. what)
+n, what = strays(KUIBagSettings)
+check(n == 0, "the bag settings don't: " .. what)
+check(KUIPlayerFrame.mover.label.font[1]:find("Barlow%-SemiBold"), "the drag overlays don't")
+check(KUIMinimapButton.glyph.font[1]:find("Barlow%-SemiBold"), "the icon doesn't")
+check(fontRow.value.text == "Rajdhani", "the setting still shows what's chosen")
+-- Built while another font is chosen, and repainted after.
+E.pages.cast = nil
+E:Select("cast")
+n, what = strays(KUIEditMode)
+check(n == 0, "a page built after the change is the same: " .. what)
+KUIMinimapButton.scripts.OnClick(KUIMinimapButton)
+KUIMinimapButton.scripts.OnClick(KUIMinimapButton)
+n, what = strays(KUIMenu)
+check(n == 0, "and the menu after repainting: " .. what)
+-- Size can still change on a fixed one.
+St.SetFont(fontRow.label, 14)
+check(fontRow.label.font[2] == 14 and fontRow.label.font[1]:find("Barlow%-SemiBold"), "size changes, font doesn't")
+St.SetFont(fontRow.label, 12)
+KUIMinimapButton.scripts.OnClick(KUIMinimapButton)
+ns.Bags:Slash("")
+SlashCmdList.KUI("font barlow")
+SlashCmdList.KUI("edit")
+end)()
+
+;(function()
+print("== Cast bar text")
+local Bar = KUICastbar
+local function cast(c)
+  c.icon, c.st, c.en, c.guid = "i", GetTime() * 1000, (GetTime() + 2) * 1000, "x" .. tostring(c.spellID)
+  castInfo.player = c
+  fire("UNIT_SPELLCAST_START", "player", c.guid)
+  local text = Bar.label.text
+  castInfo.player = nil
+  fire("UNIT_SPELLCAST_STOP", "player", c.guid)
+  Bar.scripts.OnUpdate(Bar, 2)
+  return text
+end
+check(cast({ name = "Opening", display = "Opening" }) == "Opening", "the usual case")
+check(cast({ name = "", display = "Opening" }) == "Opening", "opening a chest: empty name, display name used")
+check(cast({ name = "Internal", display = "Shown" }) == "Shown", "the display name wins, as on the game's own bar")
+check(cast({ name = "Lightning Bolt", display = "" }) == "Lightning Bolt", "empty display name falls back to the name")
+check(cast({ name = nil, display = "Opening" }) == "Opening", "no name at all still shows the bar")
+C_Spell = { GetSpellName = function(id) return id == 3365 and "Opening" or nil end }
+check(cast({ name = "", display = "", spellID = 3365 }) == "Opening", "both empty: the spell's own name")
+check(cast({ name = "", display = "", spellID = 1 }) == "Casting", "nothing known: never a blank bar")
+check(cast({ name = "", display = "" }) == "Casting", "no spell ID either")
+C_Spell = nil
+-- channels
+chanInfo.player = { name = "", display = "Drain", icon = "i", st = GetTime() * 1000, en = (GetTime() + 2) * 1000 }
+fire("UNIT_SPELLCAST_CHANNEL_START", "player")
+check(Bar.mode == "channel" and Bar.label.text == "Drain", "channels use the display name too")
+chanInfo.player = { name = "", display = "", icon = "i", st = GetTime() * 1000, en = (GetTime() + 2) * 1000 }
+fire("UNIT_SPELLCAST_CHANNEL_UPDATE", "player")
+check(Bar.label.text == "Channelling", "and never go blank")
+chanInfo.player = nil
+fire("UNIT_SPELLCAST_CHANNEL_STOP", "player")
+Bar.scripts.OnUpdate(Bar, 2)
+-- secret text goes straight to the widget
+local SM = {}
+for _, m in ipairs({ "__len", "__concat", "__lt", "__le", "__tostring", "__index" }) do SM[m] = function() error("a secret value was used in Lua", 2) end end
+local secret = setmetatable({}, SM)
+issecretvalue = function(v) return getmetatable(v) == SM end
+castInfo.player = { name = secret, display = secret, icon = "i", st = GetTime() * 1000, en = (GetTime() + 2) * 1000, guid = "s1" }
+local ok, err = pcall(function() fire("UNIT_SPELLCAST_START", "player", "s1") end)
+check(ok and rawequal(Bar.label.text, secret), "a secret name is passed straight through: " .. tostring(ok and "" or err))
+issecretvalue = nil
+castInfo.player = nil
+fire("UNIT_SPELLCAST_STOP", "player", "s1")
+Bar.scripts.OnUpdate(Bar, 2)
 end)()
 
 -- A /reload in combat waits, because secure frames can't be made then.

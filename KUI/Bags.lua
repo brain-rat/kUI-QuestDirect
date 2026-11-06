@@ -684,7 +684,7 @@ function B:BuildSettings()
   p:Hide()
   S.Panel(p, max(ns.db.alpha, 0.94))
   S.TitleBar(p, "Bag settings", SETTINGS_HEAD)
-  local x = S.Button(p, "x", 22, function() p:Hide() end)
+  local x = S.UIButton(p, "x", 22, function() p:Hide() end)
   x:SetPoint("TOPRIGHT", -3, -4)
   local io = {
     get = function(def) return ns.db[def.key] end,

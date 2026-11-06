@@ -68,7 +68,7 @@ The **Target** tab also has:
 
 The **Castbar** tab has width, height, font size, spell icon, time left, spark and scale for your bar. The icon, time and spark settings apply to the target's bar too.
 
-Every tab also has the **font** and **panel opacity**, which apply to all of kUI.
+Every tab also has the **font** and **panel opacity**, which apply to all of kUI. The settings windows themselves always stay in Barlow and stay readable, so they don't change under you while you try things.
 
 ## Minimap icon
 
@@ -127,7 +127,7 @@ Click **Settings** on the bag window, or type `/kui bags`. Press **-** / **+** (
 
 ### Fonts
 
-The font is used everywhere in kUI: bags, loot window and minimap strip.
+The font is used across kUI: unit frames, cast bars, bags, loot window and minimap strip. The settings windows, the minimap menu and the drag overlays stay in Barlow, whatever you pick.
 
 - **Bundled:** Barlow, Barlow Condensed, Rajdhani, Chakra Petch. All are free under the SIL Open Font Licence; the licences are in `Fonts/`.
 - **The game's own:** Friz Quadrata, Arial Narrow, Skurri, Morpheus.
@@ -301,7 +301,7 @@ The loot window is replaced with a QuestDirect-style one:
   - Rares: Classic spawn points placed and pinned, nameplate, mouseover and map-marker alerts, normal mobs ignored, level and position, model, sound, flash, no repeats, skull on target, kills, waypoint, the target button waiting for combat to end, ignore, the zone list.
   - Tooltips: panel, hidden Blizzard frame, old-style backdrops, health bar, font, rarity border and its reset, item level, vendor price (and not when the game shows one), drop lines best-first with chests by name, turning lines off.
   - Junk: greys sold, no-value and locked items left alone, nothing else sold, the summary, Shift to skip, a slot that changed isn't sold.
-  - Fonts: settings text redrawn after a font change, and back.
+  - Fonts: text redrawn after a font change and back, frames following the font, every piece of text in the settings windows and menu staying in Barlow.
   - Treasures: Classic chests placed, world loots remembered by name and spot, gathering left out, chests told apart, repeat loots merged, map dots and tooltips, alerts near known spots (not while still empty, no repeats, never over a rare), the Treasures list.
   - Bags: a slot button for every bag slot, category order, empties at the bottom, horizontal and vertical gaps, categories side by side, rarity glow, quest marks, fonts, money, search by name and type, live settings, categories off, items moving, opening and closing from the game's bag keys, Blizzard's bag windows kept shut, the bank opening and closing with the banker.
   - Loot: rows, colours, glow, coins, quest tags, locked items, looting, linking, All, closing by **x** / Esc / the game, under-mouse placement, auto loot, the sample.
