@@ -20,10 +20,10 @@ QP.defaults = {
   nearby = true,        -- show quests to pick up nearby
   nearbyMax = 5,        -- how many of them
   pickups = true,       -- plans include quests to pick up
-  classicOffers = true, -- use the Classic quest data (not just what the game and you have seen)
+  classicOffers = true, -- use the Classic quest data (not just what the game, you and players in Forever have seen)
   showGrey = false,     -- suggest grey (too easy) quests too
   maxAbove = 3,         -- suggest quests up to this many levels above you
-  planRadius = 900,     -- yards: plans pick up quests within this distance of you
+  pickupRange = 0,      -- yards: plans pick up quests within this distance of you (0: the whole zone)
   items = true,         -- quest item buttons
 }
 
@@ -91,6 +91,7 @@ QP:On("ADDON_LOADED", function(name)
     if QuestDirectDB[k] == nil then QuestDirectDB[k] = v end
   end
   local d = QuestDirectDB
+  d.planRadius = nil -- the old setting, 900 yards for everyone: plans now use the whole zone
   d.learned = type(d.learned) == "table" and d.learned or {}
   d.learned.g = d.learned.g or {} -- [questID] = where it was offered: m, x, y, name, n (npc), t, l, f
   d.learned.e = d.learned.e or {} -- [questID] = where it was handed in
@@ -118,13 +119,13 @@ local HELP = {
   "/qd scale 1.2 - set the size (0.5 to 2); Ctrl + mouse wheel on the title bar also works",
   "/qd alpha 0.6 - background opacity (0 to 1)",
   "/qd plan - plan this zone: quest givers, hand-ins, pick-ups and objectives in order; again to stop",
-  "/qd plan fresh - plan from scratch (ignore the previous order);  /qd plan radius 900 - pick-up range in yards",
+  "/qd plan fresh - plan from scratch (ignore the previous order);  /qd plan radius 900 - pick-up range in yards (zone: all of it)",
   "/qd items - show or hide the quest item buttons;  /qd items reset - put them back next to the tracker",
   "/qd nearby - show or hide 'Pick up nearby';  /qd pickups - include pick-ups in plans (toggle)",
   "/qd grey - suggest grey quests too (toggle);  /qd above 3 - suggest up to this many levels above you",
   "/qd classic on | off - use the Classic quest data;  /qd unignore - suggest quests you dismissed again",
   "/qd data - what QuestDirect knows: quest data, NPCs placed, what it has learned",
-  "/qd next - focus the nearest quest;  /qd clear - stop navigating",
+  "/qd next - focus the best next quest for your level;  /qd clear - stop navigating",
   "/qd zone - show only this zone's quests (toggle)",
   "/qd blizzard on | off - show or hide Blizzard's quest tracker",
   "/qd unhide - show quests you hid;  /qd reset - put the tracker back in its default spot",
@@ -152,8 +153,16 @@ function QP:Slash(msg)
     self.Plan:Build(true, true)
   elseif (cmd == "route" or cmd == "plan") and rest:match("^radius") then
     local n = tonumber(rest:match("%d+"))
-    if n then db.planRadius = math.max(100, math.min(5000, n)) end
-    self:Print("Plans pick up quests within %d yards of you.", db.planRadius)
+    if rest:match("zone") or n == 0 then
+      db.pickupRange = 0
+    elseif n then
+      db.pickupRange = math.max(100, math.min(5000, n))
+    end
+    if db.pickupRange > 0 then
+      self:Print("Plans pick up quests within %d yards of you.", db.pickupRange)
+    else
+      self:Print("Plans pick up quests from the whole zone.")
+    end
   elseif cmd == "route" or cmd == "plan" then
     N:ToggleRoute()
   elseif cmd == "items" then
@@ -187,7 +196,7 @@ function QP:Slash(msg)
   elseif cmd == "classic" then
     db.classicOffers = rest ~= "off"
     self.Offers:Invalidate()
-    self:Print("Classic quest data %s.", db.classicOffers and "on" or "off: only what the game and you have seen")
+    self:Print("Classic quest data %s.", db.classicOffers and "on" or "off: only what the game, you and players in Forever have seen")
     self:Emit("QUESTS_CHANGED")
   elseif cmd == "unignore" then
     wipe(self.char.ignored)
@@ -202,7 +211,18 @@ function QP:Slash(msg)
     for _ in pairs(O.npcPos) do placed = placed + 1 end
     for _ in pairs(db.learned.g) do lg = lg + 1 end
     for _ in pairs(db.learned.e) do le = le + 1 end
-    self:Print("Classic data: %d quests, %d NPCs (%d placed on maps%s).", nq, nn, placed, O.ready and "" or ", still placing")
+    self:Print("Quest data: %d quests, %d NPCs (%d placed on maps%s).", nq, nn, placed, O.ready and "" or ", still placing")
+    if ns.ForeverData then
+      local fq, seen = 0, 0
+      for _, f in pairs(ns.ForeverData.q) do
+        fq = fq + 1
+        if (f[9] or 0) > 0 or (f[10] or 0) > 0 then seen = seen + 1 end
+      end
+      self:Print("Forever data: %d quests, %d seen in WoW Forever, the rest Classic data (build %s, made %s).", fq, seen, ns.ForeverData.build, ns.ForeverData.made)
+      self:Print(ns.ForeverData.credit)
+    else
+      self:Print("No Forever data file. The add-on's read-me says how to make one.")
+    end
     self:Print("Learned in game: %d quest givers, %d hand-ins.", lg, le)
     O:ReadLog()
     local ids
@@ -261,7 +281,7 @@ SlashCmdList.QUESTDIRECT = function(msg) QP:Slash(msg) end
 -- Key Bindings menu (Bindings.xml)
 BINDING_HEADER_QUESTDIRECT = "QuestDirect"
 BINDING_NAME_QUESTDIRECT_TOGGLE = "Show or hide the tracker"
-BINDING_NAME_QUESTDIRECT_NEXT = "Focus the nearest quest"
+BINDING_NAME_QUESTDIRECT_NEXT = "Focus the best next quest"
 BINDING_NAME_QUESTDIRECT_CLEAR = "Stop navigating"
 BINDING_NAME_QUESTDIRECT_ROUTE = "Plan this zone, or stop the plan"
 _G["BINDING_NAME_CLICK QuestDirectItem1:LeftButton"] = "Use the first quest item (nearest quest)"

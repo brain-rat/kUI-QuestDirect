@@ -3,9 +3,11 @@
 -- hand in and pick up at each, which objectives to do. Then where to head next
 -- once the zone is done.
 --
--- The order is the shortest walk that keeps its rules (do it before handing it
--- in; hand in A before picking up its follow-up), with a lean towards picking up
--- and handing in early, so you leave town with everything you can do on the way.
+-- Quests right for your level come first, then harder ones, then the rest (see
+-- Offers:Band). Inside that, the order is the shortest walk that keeps its rules (do
+-- it before handing it in; hand in A before picking up its follow-up), with a lean
+-- towards picking up and handing in early, so you leave town with everything you can
+-- do on the way.
 -- It's deterministic and sticky: the same situation gives the same plan, and a
 -- re-plan keeps the order you had unless a change saves a real amount of walking.
 
@@ -20,6 +22,7 @@ local MERGE_YARDS = 15     -- stops this close are one stop
 local SAME_NPC_YARDS = 60  -- the same NPC name this close is the same NPC
 local OBJ_MERGE_YARDS = 40 -- objectives this close are one "Do" stop
 local EARLY_WEIGHT = 0.35  -- how strongly pick-ups and hand-ins are pulled forward
+local AT_LEVEL_WEIGHT = 0.1 -- a smaller pull towards quests closest to your level
 local STICKY_YARDS = 60    -- a re-plan only changes order to save at least this much
 local STICKY_SHARE = 0.04  -- ...or this share of the walk, whichever is more
 
@@ -33,6 +36,7 @@ function P:Active() return QP.char.planOn and self.stops ~= nil end
 --   stop.after  = { [stopIndex] = true }: stops that must come earlier
 --   stop.weight = how much it matters to get there early (0 = only distance)
 --   stop.key    = stable name, used to keep the previous order (seed)
+--   stop.band   = stops in a lower band all come before stops in a higher one
 -- Cost = walking distance + sum of weight x distance walked before reaching it.
 -- Start: the seed order (new stops inserted where they cost least) or nearest
 -- neighbour; then relocate and 2-opt moves that keep every rule.
@@ -45,10 +49,14 @@ function P.Order(start, stops, w, h, seed)
   local function valid(p)
     local pos = {}
     for k, i in ipairs(p) do pos[i] = k end
+    local top = 0
     for k, i in ipairs(p) do
       for j in pairs(stops[i].after or {}) do
         if pos[j] and pos[j] > k then return false end
       end
+      local band = stops[i].band or 1
+      if band < top then return false end
+      top = band
     end
     return true
   end
@@ -92,11 +100,16 @@ function P.Order(start, stops, w, h, seed)
     local placed, cur = {}, start
     for _ = 1, n do
       local bi, bd
+      local lowest
+      for i, s in ipairs(stops) do
+        if not placed[i] and (not lowest or (s.band or 1) < lowest) then lowest = s.band or 1 end
+      end
       for pass = 1, 2 do
         for i, s in ipairs(stops) do
           if not placed[i] then
             local ready = true
             if pass == 1 then
+              if (s.band or 1) > lowest then ready = false end
               for j in pairs(s.after or {}) do
                 if not placed[j] then ready = false break end
               end
@@ -120,7 +133,7 @@ function P.Order(start, stops, w, h, seed)
     if not seed then return 0.5 end
     return max(STICKY_YARDS, STICKY_SHARE * best)
   end
-  for _ = 1, (n > 30 and 4 or 10) do
+  for _ = 1, (n > 45 and 2 or n > 30 and 4 or 10) do
     local improved = false
     -- move one stop somewhere else
     for i = 1, n do
@@ -178,32 +191,37 @@ function P:Build(announce, fresh)
   local stops, objStop, turnStop = {}, {}, {}
   local elsewhere = {}
   local ready = {} -- Classic ids of quests ready to hand in
+  local me = O:Me()
 
-  -- NPC stops merge when they're on the same spot.
-  local function NpcStop(name, x, y)
+  -- NPC stops merge when they're on the same spot. later (a band) is for hand-ins of
+  -- quests you haven't finished: that's a second visit, so it doesn't hold up what
+  -- you can already pick up or hand in there.
+  local function NpcStop(name, x, y, later)
     local generic = name == "Quest giver" or name == "Turn-in"
     for _, s in ipairs(stops) do
-      local d = s.kind == "npc" and yards(s, { x = x, y = y })
+      local d = s.kind == "npc" and s.later == later and yards(s, { x = x, y = y })
       if d and (d <= MERGE_YARDS or (not generic and s.name == name and d <= SAME_NPC_YARDS)) then
         if s.name == "Quest giver" or s.name == "Turn-in" then s.name = name end
         return s
       end
     end
-    local s = { kind = "npc", name = name, m = mapID, x = x, y = y, turnins = {}, pickups = {}, after = {} }
+    local s = { kind = "npc", name = name, m = mapID, x = x, y = y, turnins = {}, pickups = {}, after = {}, later = later }
     s.key = generic and ("n:" .. floor(x * 100) .. "," .. floor(y * 100)) or ("n:" .. name)
+    if later then s.key = s.key .. ":later" .. later end
     stops[#stops + 1] = s
     return s
   end
 
-  -- Objectives close together are one stop.
-  local function ObjStop(q, x, y)
+  -- Objectives close together are one stop, if they suit you equally: a harder quest
+  -- doesn't get done early just because it's next to an easier one.
+  local function ObjStop(q, x, y, band)
     for _, s in ipairs(stops) do
-      if s.kind == "obj" and yards(s, { x = x, y = y }) <= OBJ_MERGE_YARDS then
+      if s.kind == "obj" and s.band == band and yards(s, { x = x, y = y }) <= OBJ_MERGE_YARDS then
         table.insert(s.quests, q.id)
         return s
       end
     end
-    local s = { kind = "obj", quest = q.id, quests = { q.id }, key = "o:" .. q.id, m = mapID, x = x, y = y, after = {} }
+    local s = { kind = "obj", quest = q.id, quests = { q.id }, key = "o:" .. q.id, m = mapID, x = x, y = y, after = {}, band = band }
     stops[#stops + 1] = s
     return s
   end
@@ -232,11 +250,12 @@ function P:Build(announce, fresh)
           elsewhere[#elsewhere + 1] = { quest = q.id, title = q.title, zone = e and O.ZoneName(e.m), npc = e and e.name, m = e and e.m, x = e and e.x, y = e and e.y }
         end
       elseif here then
-        objStop[q.id] = ObjStop(q, x, y)
+        local band = O:QuestBand(q, me)
+        objStop[q.id] = ObjStop(q, x, y, band)
         -- Its turn-in, if that's in this zone too, comes after.
         local e = O:Ender(q, mapID)
         if e and e.m == mapID then
-          local t = NpcStop(e.name, e.x, e.y)
+          local t = NpcStop(e.name, e.x, e.y, band)
           table.insert(t.turnins, q.id)
           t.pending = t.pending or {}
           t.pending[q.id] = true
@@ -246,7 +265,8 @@ function P:Build(announce, fresh)
     end
   end
 
-  -- Pick-ups: as many as your log has room for (hand-ins free up room too), nearest first.
+  -- Pick-ups from the whole zone: as many as your log has room for (hand-ins free up
+  -- room too), the best for your level first, then nearest. /qd plan radius narrows it.
   local pickups = 0
   if QP.db.pickups then
     local room = FreeSlots()
@@ -255,9 +275,12 @@ function P:Build(announce, fresh)
     local list = {}
     for _, o in ipairs(offers) do
       o.distance = O:Yards(mapID, o.giver.x, o.giver.y, px, py)
-      if o.distance <= QP.db.planRadius then list[#list + 1] = o end
+      o.band = O:Band(o.level, me, o.elite)
+      local range = QP.db.pickupRange
+      if not range or range <= 0 or o.distance <= range then list[#list + 1] = o end
     end
     table.sort(list, function(a, b)
+      if a.band ~= b.band then return a.band < b.band end
       if math.abs(a.distance - b.distance) > 1 then return a.distance < b.distance end
       return a.title < b.title
     end)
@@ -318,6 +341,9 @@ function P:Build(announce, fresh)
       for _, qid in ipairs(s.quests) do
         local r = seedRank["o:" .. qid]
         if r and (not s.rank or r < s.rank) then s.rank = r end
+        local q = Q:Get(qid)
+        local diff = q and (q.level or 0) > 0 and q.level - me.level
+        if diff and diff >= -2 and diff <= 1 then s.weight = AT_LEVEL_WEIGHT end
       end
       s.key = "o:" .. s.quests[1]
     else
@@ -325,6 +351,14 @@ function P:Build(announce, fresh)
       for _, qid in ipairs(s.turnins) do if not (s.pending and s.pending[qid]) then ready = ready + 1 end end
       s.weight = (#s.pickups > 0 or ready > 0) and EARLY_WEIGHT or 0
       s.rank = seedRank[s.key]
+      -- A second visit waits with its quest. Otherwise hand-ins are worth doing now,
+      -- and pick-ups go by the best quest on offer.
+      s.band = s.later or (ready > 0 and 1) or nil
+      if not s.band then
+        for _, o in ipairs(s.pickups) do
+          if not s.band or o.band < s.band then s.band = o.band end
+        end
+      end
     end
     if s.rank then seeded = true end
   end
@@ -350,14 +384,16 @@ function P:Build(announce, fresh)
   self:SyncRoute()
 
   if announce then
-    local npcs, objs, ins = 0, 0, 0
+    local npcs, objs, ins, late = 0, 0, 0, 0
     for _, s in ipairs(ordered) do
       if s.kind == "obj" then objs = objs + 1 else npcs = npcs + 1; ins = ins + #s.turnins end
+      if (s.band or 1) > 1 then late = late + 1 end
     end
     if #ordered == 0 then
       QP:Print("Nothing to do in this zone%s.", self.hub and (". Next: " .. self.hub.zone) or "")
     else
-      QP:Print("Plan: %d stops, about %d yards. %d to pick up, %d to hand in, %d to do.", #ordered, floor((walked or 0) + 0.5), pickups, ins, objs)
+      QP:Print("Plan: %d stops, about %d yards. %d to pick up, %d to hand in, %d to do.%s", #ordered, floor((walked or 0) + 0.5), pickups, ins, objs,
+        late > 0 and (" %d that aren't right for your level come last."):format(late) or "")
     end
   end
   self.current, self.doneState, self.built, self.focused, self.hubAnnounced = nil, {}, false, false, false
@@ -508,6 +544,13 @@ end
 function P:Toggle()
   if QP.char.planOn then self:Stop(true) else self:Build(true) end
 end
+
+-- A new level changes which quests are right for you.
+QP:On("PLAYER_LEVEL_UP", function()
+  if QP.db and QP.char.planOn then
+    C_Timer.After(1, function() if QP.char.planOn then P:Build(false) end end)
+  end
+end)
 
 -- A new zone gets a new plan.
 QP:On("ZONE_CHANGED_NEW_AREA", function()

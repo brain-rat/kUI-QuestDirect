@@ -240,6 +240,32 @@ local SOURCE = {
   classic = "From Classic quest data (may differ in Forever)",
 }
 
+-- ForeverDB's terms: their credit, in full, wherever their data shows.
+local function AddCredit()
+  local credit = QP.Offers:Credit()
+  if credit then GameTooltip:AddLine(credit, 0.5, 0.75, 0.8, true) end
+end
+
+-- One label for a stop or row that mixes records: 0 Classic data, 1 or 2 from Forever.
+local function AddLabels(labels)
+  local forever, classic, text
+  for _, l in ipairs(labels) do
+    if l > 0 then
+      forever = true
+      text = text or QP.Offers.LABEL[l]
+    else
+      classic = true
+    end
+  end
+  if forever and classic then
+    GameTooltip:AddLine("Part " .. text:lower() .. ", part Classic data", 0.6, 0.6, 0.6, true)
+  elseif forever then
+    GameTooltip:AddLine(text, 0.6, 0.6, 0.6, true)
+  elseif classic then
+    GameTooltip:AddLine("Classic data", 0.6, 0.6, 0.6, true)
+  end
+end
+
 local function OfferTooltip(row, o)
   GameTooltip:SetOwner(row, "ANCHOR_LEFT")
   local cr, cg, cb = 1, 0.82, 0
@@ -255,11 +281,19 @@ local function OfferTooltip(row, o)
     local q = QP.Quests:Get(o.unlockQuest)
     GameTooltip:AddLine("After you hand in " .. (q and q.title or "its earlier quest"), 1, 0.82, 0, true)
   end
-  GameTooltip:AddLine(SOURCE[o.source] or "", 0.6, 0.6, 0.6)
+  GameTooltip:AddLine(o.source == "forever" and QP.Offers.LABEL[o.label or 1] or SOURCE[o.source] or "", 0.6, 0.6, 0.6)
+  if o.fdb then AddCredit() end
   GameTooltip:AddLine(" ")
   GameTooltip:AddLine("Click: navigate to the quest giver\nRight-click: more", 0.6, 0.75, 1)
   GameTooltip:Show()
 end
+
+-- Why a stop was left for later.
+local LATER = {
+  [2] = "Later: harder than your level",
+  [3] = "Later: too easy to be worth much",
+  [4] = "Last: far above your level",
+}
 
 local function StopTooltip(row, s)
   GameTooltip:SetOwner(row, "ANCHOR_LEFT")
@@ -285,7 +319,19 @@ local function StopTooltip(row, s)
     for _, o in ipairs(s.pickups) do
       GameTooltip:AddLine("Pick up: " .. o.title, 1, 1, 1)
     end
+    local labels, fdb = {}, false
+    for _, id in ipairs(s.turnins) do
+      local q = QP.Quests:Get(id)
+      local info = q and q.dbid and QP.Offers:Info(q.dbid)
+      if info and info.fdb then labels[#labels + 1] = info.seenE; fdb = true end
+    end
+    for _, o in ipairs(s.pickups) do
+      if o.fdb then labels[#labels + 1] = o.label or 0; fdb = true end
+    end
+    AddLabels(labels)
+    if fdb then AddCredit() end
   end
+  if LATER[s.band] then GameTooltip:AddLine(LATER[s.band], 1, 0.6, 0.3) end
   GameTooltip:AddLine(" ")
   GameTooltip:AddLine("Click: go here now\nRight-click: skip", 0.6, 0.75, 1)
   GameTooltip:Show()
@@ -301,6 +347,7 @@ local function RowTooltip(row)
     GameTooltip:AddLine(("%d quests for your level near %s%s"):format(h.count, h.npc,
       h.minL and (" (level " .. h.minL .. (h.maxL ~= h.minL and ("-" .. h.maxL) or "") .. ")") or ""), 0.8, 0.8, 0.8, true)
     if h.turnins > 0 then GameTooltip:AddLine(h.turnins .. " of your finished quests hand in around there", 1, 0.82, 0, true) end
+    AddCredit()
     GameTooltip:AddLine("Click: navigate there", 0.6, 0.75, 1)
     GameTooltip:Show()
     return
@@ -310,6 +357,7 @@ local function RowTooltip(row)
     GameTooltip:SetOwner(row, "ANCHOR_LEFT")
     GameTooltip:SetText(a.title, 1, 0.82, 0)
     GameTooltip:AddLine("Hand in " .. (a.npc and ("to " .. a.npc .. ", ") or "") .. (a.zone or "elsewhere"), 1, 1, 1)
+    AddCredit()
     if a.m then GameTooltip:AddLine("Click: navigate there", 0.6, 0.75, 1) end
     GameTooltip:Show()
     return
@@ -691,6 +739,12 @@ function T:Refresh()
         y = y + h + 2
       end
     end
+  end
+  -- The credit stays in sight under the list, not only in tooltips.
+  local credit = QP.Offers:Credit()
+  if credit and (total > 0 or extra) then
+    local r = self:Acquire()
+    y = self:Fill(r, y + 2, width, credit, "", nil, nil, { 0.5, 0.75, 0.8 })
   end
   for i = self.used + 1, #self.rows do self.rows[i]:Hide() end
   self.content:SetHeight(max(10, y))

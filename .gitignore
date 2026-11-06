@@ -1,6 +1,8 @@
 # ForeverSync: your API key and downloaded data stay on your PC
 key.txt
 ForeverSync/data/
+# made from ForeverDB's data on your own PC; not redistributed
+QuestDirect/ForeverData.lua
 ForeverSync/dist/
 *.exe
 # build and editor leftovers

@@ -227,7 +227,12 @@ local function section(s) print("\n== " .. s) end
 
 local ns = {}
 for line in io.lines(DIR .. "/QuestDirect.toc") do
-  if line:match("%.lua$") then assert(loadfile(DIR .. "/" .. line))("QuestDirect", ns) end
+  local file = line:match("^(.-%.lua)%s*$")
+  if file then
+    -- ForeverData.lua is made on the player's PC, so it's normal for it to be missing.
+    local fn, err = loadfile(DIR .. "/" .. file)
+    if fn then fn("QuestDirect", ns) elseif file ~= "ForeverData.lua" then error(err) end
+  end
 end
 local QP = ns.QP
 
@@ -319,8 +324,11 @@ print("  offers: " .. table.concat(names, "; "))
 check(#offerRows > 0 and #offerRows <= QP.db.nearbyMax, "'Pick up nearby' lists quests (" .. #offerRows .. " rows)")
 local list = O:Nearby()
 local sorted = true
-for i = 2, #list do if list[i].distance < list[i - 1].distance then sorted = false end end
-check(sorted, "nearest first")
+for i = 2, #list do
+  local a, b = list[i - 1], list[i]
+  if b.band < a.band or (b.band == a.band and b.distance < a.distance - 1) then sorted = false end
+end
+check(sorted, "best for your level first, then nearest")
 local byTitle = {}
 for _, o in ipairs(offers) do byTitle[o.title] = o end
 check(not byTitle["Cutting Teeth"], "quests in your log aren't suggested")
@@ -417,9 +425,9 @@ for _, s in ipairs(P.stops) do pickups = pickups + #(s.pickups or {}) end
 check(pickups > 0 and pickups <= 35 - #QP.Quests.list + 1, "pick-ups fit in your log: " .. pickups)
 local merged = true
 for i, a in ipairs(P.stops) do for j, b in ipairs(P.stops) do
-  if i < j and a.kind == "npc" and b.kind == "npc" and O:Yards(1411, a.x, a.y, b.x, b.y) < 15 then merged = false end
+  if i < j and a.kind == "npc" and b.kind == "npc" and a.later == b.later and O:Yards(1411, a.x, a.y, b.x, b.y) < 15 then merged = false end
 end end
-check(merged, "one stop per quest giver")
+check(merged, "one stop per quest giver, and one more for hand-ins you haven't finished")
 local first = P.stops[1]
 check(P.current == 1, "first stop is current")
 if first.kind == "npc" then
@@ -474,13 +482,19 @@ local nearby = 0
 for _, s in ipairs(P.stops) do if s.kind == "obj" and #s.quests > 1 then nearby = nearby + 1 end end
 print("  merged Do stops: " .. nearby)
 -- pick-up radius
-QP.db.planRadius = 150
+QP:Slash("plan radius 150")
+check(QP.db.pickupRange == 150, "/qd plan radius sets the range")
 QP:Slash("plan fresh")
 local far = false
 local pm, ppx, ppy = QP.Quests:PlayerPos()
 for _, s in ipairs(P.stops) do for _, o in ipairs(s.pickups or {}) do if QP.Offers:Yards(1411, o.giver.x, o.giver.y, ppx, ppy) > 150 then far = true end end end
 check(not far, "plans only pick up quests within range")
-QP.db.planRadius = 900
+QP:Slash("plan radius zone")
+check(QP.db.pickupRange == 0, "and 'zone' means all of it")
+QP:Slash("plan radius 40")
+check(QP.db.pickupRange == 100, "a range has a sensible minimum")
+QP:Slash("plan radius 0")
+check(QP.db.pickupRange == 0, "and 0 means all of it too")
 QP:Slash("plan fresh")
 
 -- take everything at the first quest-giver stop
@@ -732,6 +746,521 @@ combat = false
 fire("PLAYER_REGEN_ENABLED")
 check(ObjectiveTrackerFrame.shown == true, "applied after combat")
 QP:Slash("help")
+
+section("Level priority")
+-- A function, not a block: this file is near Lua's limit of 200 locals in one function.
+;(function()
+  local Offers, Plan, D = QP.Offers, QP.Plan, ns.QuestData
+  if Plan:Active() then Plan:Stop() end
+  local savedQuests = {}
+  for i, q in ipairs(QUESTS) do savedQuests[i] = q end
+  local savedLearned, savedEnders = QuestDirectDB.learned.g, QuestDirectDB.learned.e
+  local savedClassic, savedLevel, savedMax = QP.db.classicOffers, UnitLevel, C_QuestLog.GetMaxNumQuestsCanAccept
+  QuestDirectDB.learned.g, QuestDirectDB.learned.e = {}, {}
+  QP.db.classicOffers = false
+  local level = 12
+  UnitLevel = function() return level end
+  local function setQuests(list)
+    for i = #QUESTS, 1, -1 do table.remove(QUESTS, i) end
+    table.insert(QUESTS, { header = "Durotar" })
+    for _, q in ipairs(list) do table.insert(QUESTS, q) end
+    for id in pairs(QP.char.hidden) do QP.char.hidden[id] = nil end
+    QP.Quests:Refresh()
+    Offers:Invalidate()
+  end
+  local function quest(id, lvl, x, y, extra)
+    local q = { id = id, title = "Quest " .. id, level = lvl, pin = { 1411, x, y }, objectives = { { text = "x: 0/1" } } }
+    for k, v in pairs(extra or {}) do q[k] = v end
+    return q
+  end
+  local function offer(id, lvl, x, y, name)
+    QuestDirectDB.learned.g[id] = { m = 1411, x = x, y = y, t = "Offer " .. id, l = lvl, name = name or ("Giver " .. id), f = "Horde" }
+    Offers:Invalidate()
+  end
+  local function ender(id, x, y, name)
+    QuestDirectDB.learned.e[id] = { m = 1411, x = x, y = y, name = name }
+  end
+  local function objOf(id)
+    for i, s in ipairs(Plan.stops) do
+      if s.kind == "obj" then for _, q in ipairs(s.quests) do if q == id then return s, i end end end
+    end
+  end
+  local function bandsInOrder()
+    local top = 0
+    for _, s in ipairs(Plan.stops) do
+      if (s.band or 1) < top then return false end
+      top = s.band or 1
+    end
+    return true
+  end
+
+  -- Which band is which, at level 12
+  local me12 = Offers:Me()
+  check(me12.level == 12 and me12.green == 6, "level 12: grey is below 6")
+  check(Offers:Band(12, me12) == 1 and Offers:Band(14, me12) == 1, "your level and two above are right for you")
+  check(Offers:Band(15, me12) == 2 and Offers:Band(16, me12) == 2, "three and four above are harder")
+  check(Offers:Band(17, me12) == 4, "five above is far too hard")
+  check(Offers:Band(6, me12) == 1 and Offers:Band(5, me12) == 3, "grey is too easy, the level above it isn't")
+  check(Offers:Band(nil, me12) == 1 and Offers:Band(0, me12) == 1, "no level known: no penalty")
+  check(Offers:Band(12, me12, true) == 2 and Offers:Band(nil, me12, true) == 2, "a group quest counts as harder on your own")
+  local realGroup = IsInGroup
+  IsInGroup = function() return true end
+  check(Offers:Band(12, me12, true) == 1, "but not in a group")
+  IsInGroup = realGroup
+  check(Offers:QuestBand({ level = 17, complete = true }, me12) == 1, "a finished quest is worth handing in now, whatever its level")
+  D.q[89050] = { "Group Quest", 12, 10, 178, 0, "", 0, 0, 1, "", "" }
+  Offers.info[89050] = nil
+  check(Offers:QuestBand({ level = 12, dbid = 89050 }, me12) == 2, "a quest in your log the data says needs a group")
+
+  -- The case reported: a level 15 right next to you, level 12s further off.
+  setQuests({
+    quest(301, 15, 0.52, 0.50),
+    quest(302, 12, 0.20, 0.20),
+    quest(303, 13, 0.80, 0.80),
+    quest(304, 5, 0.51, 0.51),
+    quest(305, 17, 0.53, 0.53),
+    quest(306, 15, 0.51, 0.49, { complete = true, turnin = { 1411, 0.54, 0.50 } }),
+  })
+  ender(306, 0.54, 0.50, "Ready Hand-in")
+  QP:Slash("plan fresh")
+  local _, i301 = objOf(301)
+  local _, i302 = objOf(302)
+  local _, i303 = objOf(303)
+  local _, i304 = objOf(304)
+  local _, i305 = objOf(305)
+  check(i302 < i301 and i303 < i301, "level 12 and 13 quests come before the level 15, however close it is")
+  check(i301 < i304, "harder quests before ones too easy to matter")
+  check(i304 < i305, "far too hard comes last")
+  check(bandsInOrder(), "the whole plan keeps the bands in order")
+  check(Plan.stops[1].kind == "npc" and Plan.stops[1].turnins[1] == 306, "a finished quest is handed in first, level 15 or not")
+  check(QP.char.route and QP.char.route[1] == 306, "the quest list numbers follow")
+
+  -- Objectives side by side but of different difficulty stay separate.
+  setQuests({ quest(311, 12, 0.60, 0.60), quest(312, 15, 0.601, 0.601), quest(313, 13, 0.602, 0.602) })
+  QP:Slash("plan fresh")
+  local s311, n311 = objOf(311)
+  local s312, n312 = objOf(312)
+  local s313 = objOf(313)
+  check(s311 == s313, "two right for you close together are still one stop")
+  check(s311 ~= s312 and n311 < n312, "a harder one next to them is its own later stop")
+  check(s312.band == 2 and s311.band == 1, "with its band")
+  check(s312.weight == 0 and s311.weight > 0, "and only quests near your level get the small pull forward")
+  setQuests({ quest(315, 10, 0.60, 0.60) })
+  QP:Slash("plan fresh")
+  check(objOf(315).weight > 0 and setQuests({ quest(316, 9, 0.60, 0.60) }) == nil, "two below your level gets it")
+  QP:Slash("plan fresh")
+  check(objOf(316).weight == 0, "three below doesn't")
+  setQuests({ quest(317, 14, 0.60, 0.60) })
+  QP:Slash("plan fresh")
+  check(objOf(317).weight == 0, "nor two above")
+  setQuests({ quest(318, 13, 0.60, 0.60) })
+  QP:Slash("plan fresh")
+  check(objOf(318).weight > 0, "one above does")
+
+  -- A quest giver: pick up now, come back for the hand-in once it's done.
+  setQuests({ quest(321, 12, 0.20, 0.20), quest(322, 15, 0.70, 0.70) })
+  ender(321, 0.45, 0.45, "Hub")
+  ender(322, 0.45, 0.45, "Hub")
+  offer(90321, 12, 0.45, 0.45, "Hub")
+  QP:Slash("plan fresh")
+  local hubNow, hubLater, hubHard
+  local where = {}
+  for i, s in ipairs(Plan.stops) do
+    where[s] = i
+    if s.kind == "npc" and s.name == "Hub" then
+      if not s.later then hubNow = s elseif s.later == 1 then hubLater = s else hubHard = s end
+    end
+  end
+  local o321, o322 = objOf(321), objOf(322)
+  check(hubNow and #hubNow.pickups == 1 and #hubNow.turnins == 0, "the pick-up is its own visit")
+  check(hubLater and hubLater.turnins[1] == 321 and #hubLater.pickups == 0, "the hand-in is another")
+  check(hubHard and hubHard.turnins[1] == 322 and hubHard.band == 2, "and a harder quest's hand-in waits with it")
+  check(where[hubNow] < where[o321], "you pick up before going off to do the objective")
+  check(where[o321] < where[hubLater], "and hand in after it")
+  check(where[o322] < where[hubHard] and where[hubLater] < where[o322], "the harder quest and its hand-in come after")
+  check(hubNow.key == "n:Hub" and hubLater.key == "n:Hub:later1" and hubHard.key == "n:Hub:later2", "each visit keeps its own place in the plan")
+  check(bandsInOrder(), "nothing there tangles the bands")
+  QuestDirectDB.learned.g, QuestDirectDB.learned.e = {}, {}
+
+  -- Levelling up re-sorts the plan.
+  setQuests({ quest(331, 15, 0.52, 0.50), quest(332, 12, 0.20, 0.20) })
+  QP:Slash("plan fresh")
+  local _, a331 = objOf(331)
+  local _, a332 = objOf(332)
+  check(a332 < a331, "level 15 waits at level 12")
+  level = 13
+  fire("PLAYER_LEVEL_UP")
+  runTimers(2)
+  check(objOf(331).band == 1, "level 13: it's right for you now")
+  _, a331 = objOf(331)
+  _, a332 = objOf(332)
+  check(a331 < a332, "and the nearer one comes first")
+  level = 12
+  fire("PLAYER_LEVEL_UP")
+  runTimers(2)
+  _, a331 = objOf(331)
+  _, a332 = objOf(332)
+  check(a332 < a331 and bandsInOrder(), "an old order that breaks the bands is put right, not kept")
+  -- Stays put otherwise
+  local kept = table.concat(QP.char.planOrder, ">")
+  QP:Slash("plan"); QP:Slash("plan")
+  check(table.concat(QP.char.planOrder, ">") == kept, "turning Plan off and on keeps the order")
+  Plan:Stop()
+
+  -- Pick-ups: the whole zone, and the right level first
+  setQuests({})
+  offer(90401, 15, 0.51, 0.50)  -- right beside you, but harder
+  offer(90402, 12, 0.05, 0.05)  -- the far corner of the zone
+  offer(90403, 13, 0.95, 0.95)  -- the other far corner
+  offer(90404, 12, 0.30, 0.30)
+  local far = Offers:Yards(1411, 0.05, 0.05, 0.5, 0.5)
+  check(far > 900, "the far giver is well over the old range: " .. math.floor(far))
+  QP:Slash("plan fresh")
+  local function taken()
+    local t = {}
+    for _, s in ipairs(Plan.stops) do for _, o in ipairs(s.pickups or {}) do t[o.id] = true end end
+    return t
+  end
+  local got = taken()
+  check(got[90402] and got[90403], "plans find quests anywhere in the zone")
+  local hardStop, goodStop
+  for i, s in ipairs(Plan.stops) do
+    for _, o in ipairs(s.pickups or {}) do
+      if o.id == 90401 then hardStop = i elseif not goodStop or i > goodStop then goodStop = i end
+    end
+  end
+  check(hardStop and hardStop > goodStop, "the harder pick-up comes after the right ones, even right beside you")
+  check(Plan.stops[hardStop].band == 2, "a stop with only harder pick-ups is itself later")
+  -- Short of room: right level beats close.
+  C_QuestLog.GetMaxNumQuestsCanAccept = function() return 3 end
+  QP:Slash("plan fresh")
+  got = taken()
+  check(got[90404] and got[90402] and got[90403] and not got[90401], "with room for three, the harder one is what's left out")
+  C_QuestLog.GetMaxNumQuestsCanAccept = function() return 1 end
+  QP:Slash("plan fresh")
+  got = taken()
+  check(got[90404] and not got[90401] and not got[90402], "with room for one, the nearest quest right for you")
+  C_QuestLog.GetMaxNumQuestsCanAccept = savedMax
+  -- A hand-in is worth the trip even if all that's on offer there is harder.
+  table.insert(QUESTS, quest(431, 15, 0.5, 0.5, { complete = true, turnin = { 1411, 0.51, 0.50 } }))
+  ender(431, 0.51, 0.50, "Giver 90401")
+  QP.Quests:Refresh()
+  QP:Slash("plan fresh")
+  for _, s in ipairs(Plan.stops) do
+    if s.name == "Giver 90401" then check(s.band == 1 and #s.turnins == 1 and #s.pickups == 1 and s.pickups[1].band == 2, "a stop with a finished quest counts as right") end
+  end
+  table.remove(QUESTS)
+  QuestDirectDB.learned.e[431] = nil
+  QP.Quests:Refresh()
+  Offers:Invalidate()
+  -- A mixed giver is visited for the good quest.
+  offer(90405, 12, 0.51, 0.50, "Giver 90401")
+  QP:Slash("plan fresh")
+  for _, s in ipairs(Plan.stops) do
+    if s.name == "Giver 90401" then check(s.band == 1 and #s.pickups == 2, "a giver with one right quest counts as right") end
+  end
+  QuestDirectDB.learned.g[90405] = nil
+  QP:Slash("plan radius 200")
+  QP:Slash("plan fresh")
+  got = taken()
+  check(got[90401] and not got[90402], "a set range still limits it")
+  QP:Slash("plan radius zone")
+  Plan:Stop()
+
+  -- Saying so
+  local before = #chat
+  QP:Slash("plan fresh")
+  check(table.concat(chat, "\n", before + 1):find("1 that aren't right for your level come last", 1, true), "the plan says so")
+  local hardRow
+  QP.Tracker:Refresh()
+  for i = 1, T.used do if T.rows[i].stop and T.rows[i].stop.band == 2 then hardRow = T.rows[i] end end
+  wipe(GameTooltip.lines)
+  hardRow.scripts.OnEnter(hardRow)
+  check(table.concat(GameTooltip.lines, " "):find("Later: harder than your level", 1, true), "and the stop's tooltip says why")
+  Plan:Stop()
+
+  -- Pick up nearby, with no plan
+  local near = Offers:Nearby()
+  check(near[1].band == 1 and near[1].id == 90404, "Pick up nearby: nearest right for you first")
+  check(near[#near].id == 90401, "and the harder one last, though it's right beside you")
+  QP.db.nearbyMax = 3
+  QP.Tracker:Refresh()
+  local shown = {}
+  for i = 1, T.used do if T.rows[i].offer then shown[T.rows[i].offer.id] = true end end
+  check(shown[90402] and not shown[90401], "so a short list shows what's right for you")
+  QP.db.nearbyMax = 5
+  QuestDirectDB.learned.g = {}
+  Offers:Invalidate()
+
+  -- Next quest and the quest list, with no plan
+  local function far2(q, d) q.fixed = d return q end
+  local realDist = C_QuestLog.GetDistanceSqToQuest
+  C_QuestLog.GetDistanceSqToQuest = function(id)
+    local q = find(id)
+    return q.fixed and q.fixed * q.fixed or 1e8, true
+  end
+  setQuests({ far2(quest(401, 15, 0.51, 0.5), 50), far2(quest(402, 12, 0.2, 0.2), 900), far2(quest(403, 12, 0.3, 0.3), 700), far2(quest(404, 5, 0.5, 0.51), 10) })
+  check(QP.Nav:Nearest().id == 403, "next quest: the nearest right for you, not the nearest")
+  check(QP.Nav:Nearest(403).id == 402, "and the one after")
+  local order, groups = QP.Quests:Sorted()
+  local ids = {}
+  for _, q in ipairs(groups[order[1]]) do ids[#ids + 1] = q.id end
+  check(table.concat(ids, ",") == "403,402,401,404", "the quest list goes the same way: " .. table.concat(ids, ","))
+  setQuests({ far2(quest(411, 15, 0.51, 0.5), 50), far2(quest(412, 15, 0.51, 0.5, { complete = true }), 400) })
+  check(QP.Nav:Nearest().id == 412, "a finished quest counts as right for you")
+  -- Don't send you out of the zone for a better level.
+  setQuests({ far2(quest(421, 15, 0.51, 0.5), 100) })
+  table.insert(QUESTS, { header = "Orgrimmar" })
+  table.insert(QUESTS, far2(quest(422, 12, 0.5, 0.5, { qmap = 1454 }), 50))
+  QP.Quests:Refresh()
+  check(QP.Nav:Nearest().id == 421, "one in this zone wins over a better one in another")
+  QP.char.hidden[421] = true
+  check(QP.Nav:Nearest().id == 422, "and if there's nothing here, the other zone")
+  QP.char.hidden[421] = nil
+  C_QuestLog.GetDistanceSqToQuest = realDist
+
+  -- Next zone: quests right for you count for more
+  local realByMap, realPos, realCache = Offers.byMap, Offers.npcPos, Offers.hubCache
+  local function hubAt(id, x)
+    D.q[id] = { "Hub " .. id, 12, 1, 178, 0, "", 0, 0, 0, tostring(id), "" }
+    D.n[id] = { "Hub Giver " .. id, 1, "" }
+    Offers.info[id] = nil
+    return { m = 1454, x = x, y = 0.5, inst = 1, wx = 1500, wy = -4200 - x * 1000 }
+  end
+  setQuests({})
+  -- The harder hub is the nearer of the two.
+  local spotA, spotB = hubAt(89101, 0.9), hubAt(89103, 0.1)
+  hubAt(89102, 0.9); hubAt(89104, 0.1)
+  D.q[89101][2], D.q[89102][2] = 15, 15
+  Offers.info[89101], Offers.info[89102] = nil, nil
+  Offers.npcPos = { [89101] = { spotA }, [89102] = { spotA }, [89103] = { spotB }, [89104] = { spotB } }
+  Offers.byMap = { [1454] = { 89101, 89102, 89103, 89104 } }
+  Offers.ready = true
+  local hub1 = Offers:NextHub(true)
+  check(hub1 and hub1.count == 2 and hub1.minL == 12, "next zone: the hub right for your level, not the harder one")
+  Offers.byMap = { [1454] = { 89101, 89102 } }
+  Offers.npcPos = { [89101] = { spotA }, [89102] = { spotA } }
+  local hub2 = Offers:NextHub(true)
+  check(hub2 and hub2.count == 2 and hub2.minL == 15, "but two harder quests still beat nowhere to go")
+  Offers.byMap, Offers.npcPos, Offers.hubCache = realByMap, realPos, realCache
+  for _, id in ipairs({ 89050, 89101, 89102, 89103, 89104 }) do D.q[id], D.n[id], Offers.info[id] = nil, nil, nil end
+
+  -- Back as it was
+  UnitLevel = savedLevel
+  QP.db.classicOffers = savedClassic
+  QuestDirectDB.learned.g, QuestDirectDB.learned.e = savedLearned, savedEnders
+  for i = #QUESTS, 1, -1 do table.remove(QUESTS, i) end
+  for i, q in ipairs(savedQuests) do QUESTS[i] = q end
+  QP.Quests:Refresh()
+  Offers:Invalidate()
+end)()
+
+if ns.ForeverData then
+  print("\n== Forever data: a real file is loaded, so the made-up one below is skipped")
+else
+  section("Forever data")
+  local O = QP.Offers
+  local function tipOf(row)
+    wipe(GameTooltip.lines)
+    row.scripts.OnEnter(row)
+    return table.concat(GameTooltip.lines, " | ")
+  end
+  local CREDIT = "Data from ForeverDB.net (https://foreverdb.net)"
+  local function creditRow()
+    for i = 1, T.used do if T.rows[i].title.text == CREDIT then return T.rows[i] end end
+  end
+  local function offerOf(list, id) for _, o in ipairs(list) do if o.dbid == id then return o end end end
+
+  -- Without the file nothing changes.
+  check(O:Credit() == nil, "no file, no credit")
+  T:Refresh()
+  check(not creditRow(), "and no credit row")
+  local before = #chat
+  QP:Slash("data")
+  check(table.concat(chat, "\n", before + 1):find("No Forever data file"), "/qd data says there's no file")
+
+  -- Quests in the Classic data, as they'd be before the overlay.
+  local D = ns.QuestData
+  D.q[88001] = { "Old Title", 5, 3, 178, 1, "", 0, 0, 0, "3143", "3143" }
+  D.q[88002] = { "Classic Only Label", 5, 3, 178, 0, "", 0, 0, 0, "3143", "3143" }
+  D.q[88003] = { "Not In ForeverDB", 5, 3, 178, 0, "", 0, 0, 0, "3143", "3143" }
+  D.n[700099] = { "Old Name", 1, "" }
+  local gornek = O.npcPos[3143][1]
+  local gx, gy = gornek.x, gornek.y
+  ns.ForeverData = {
+    build = "9.9", made = "2026-01-01", credit = CREDIT,
+    q = {
+      [88001] = { "New Title", 6, false, false, false, false, "700002", false, 1, 0 },
+      [88002] = { false, false, false, false, false, false, false, false, 0, 0 },
+      [88101] = { "Forever Quest", 6, 2, 178, 0, "", "700001", "700001", 1, 1 },
+      [88102] = { "Alliance Quest", 6, 2, 77, 0, "", "700001", "700001", 1, 1 },
+      [88103] = { "Paladin Quest", 6, 2, 0, 2, "", "700001", "700001", 1, 1 },
+      [88104] = { "Warrior Quest", 6, 2, 0, 1, "", "700001", "700001", 1, 1 },
+      [88105] = { "Second Part", 6, 2, 178, 0, "88101", "700001", "700001", 1, 1 },
+      [88107] = { "Hand In Only", 6, 2, 178, 0, "", "", "700003", 0, 1 },
+      [88108] = { "New Zone Quest", 6, 2, 178, 0, "", "700004", "700004", 1, 1 },
+      [88109] = { "Marker Quest", 6, 2, 178, 0, "", "900088109", "", 2, 0 },
+    },
+    n = { [700001] = "Forever Giver", [700002] = "Seen Giver", [700003] = "Seen Hand-in", [700004] = "Far Giver", [700099] = "New Name", [900088109] = "Quest giver" },
+    p = {
+      [3143] = "1411,10.0,20.0",
+      [700001] = "1411,30.0,40.0",
+      [700002] = "1411,31.0,41.0",
+      [700003] = "1454,50.0,50.0;1411,32.0,42.0",
+      [700004] = "1460,50.0,50.0",
+      [700098] = "1411,33.0,43.0",
+      [900088109] = "1411,34.0,44.0",
+    },
+  }
+  O:Info(88001) -- cached before the overlay
+  O:ByTitle()
+  O:Groups()
+  O:UseForeverData()
+  local f1 = ns.ForeverData.q[88001]
+  check(D.q[88001][1] == "New Title" and D.q[88001][2] == 6, "known quest takes the new title and level")
+  check(D.q[88001][3] == 3 and D.q[88001][5] == 1 and D.q[88001][10] == "700002" and D.q[88001][11] == "3143", "and keeps what the file leaves alone")
+  check(O:Info(88001).title == "New Title", "what was read earlier isn't kept")
+  check(O:ByTitle()["new title"] and not O:ByTitle()["old title"], "matching by title uses the new title")
+  check(D.q[88101][1] == "Forever Quest" and D.q[88101][9] == 0 and D.q[88101][7] == 0, "a new quest gets a whole record")
+  check(D.n[700001][1] == "Forever Giver" and D.n[700099][1] == "New Name", "new NPCs and new names")
+  check(D.n[700098] and D.n[700098][3] == "", "an NPC with only a place still gets a record")
+  D.q[88001][1] = "Changed Here"
+  O:UseForeverData()
+  check(D.q[88001][1] == "Changed Here", "laying it over twice does nothing")
+  D.q[88001][1] = "New Title"
+  O.info[88001] = nil
+
+  local info = O:Info(88001)
+  check(info.fdb and info.seenG == 1 and info.seenE == 0, "the quest keeps its labels")
+  local plain = O:Info(88003)
+  check(plain and not plain.fdb and plain.seenG == 0, "a quest ForeverDB doesn't list has none")
+  check(D.q[88003][1] == "Not In ForeverDB", "and is still there")
+
+  -- Placing
+  O.ready = false
+  local built
+  O:Build(function() built = true end)
+  runTimers(5)
+  check(built and O.ready, "placed again with the new data")
+  local s1 = O.npcPos[700001] and O.npcPos[700001][1]
+  check(s1 and s1.m == 1411 and math.abs(s1.x - 0.30) < 1e-9 and math.abs(s1.y - 0.40) < 1e-9, "percent on the zone map becomes 0-1")
+  local wx, wy = toWorld(1411, 0.30, 0.40)
+  check(s1 and s1.inst == 1 and math.abs(s1.wx - wx) < 1e-6 and math.abs(s1.wy - wy) < 1e-6, "and it knows its world spot, for finding hubs")
+  local g2 = O.npcPos[3143][1]
+  check(g2 and math.abs(g2.x - 0.10) < 1e-9 and (g2.x ~= gx or g2.y ~= gy), "where players saw an NPC beats its Classic spawn")
+  check(#O.npcPos[700003] == 2 and O.npcPos[700003][1].m == 1454, "an NPC can stand on more than one map")
+  local far = O.npcPos[700004] and O.npcPos[700004][1]
+  check(far and far.m == 1460 and far.inst == nil, "a map the game can't place in the world still counts")
+  check(O.npcPos[700098], "an NPC with no Classic spot is placed")
+
+  -- Offers
+  O:Invalidate()
+  local list = O:ForMap(1411)
+  local fq = offerOf(list, 88101)
+  check(fq and fq.source == "forever" and fq.label == 1 and fq.fdb, "a new quest is offered, labelled as seen in Forever")
+  check(fq and fq.giver.name == "Forever Giver" and math.abs(fq.giver.x - 0.30) < 1e-9, "at the place players saw its giver")
+  check(not offerOf(list, 88102), "the other side's quest isn't")
+  check(not offerOf(list, 88103), "another class's quest isn't")
+  check(offerOf(list, 88104), "your class's quest is")
+  check(not offerOf(list, 88105), "a follow-up waits for its earlier quest")
+  QP.char.done[88101] = true
+  O:Invalidate()
+  check(offerOf(O:ForMap(1411), 88105), "and comes after it")
+  check(not offerOf(O:ForMap(1411), 88101), "what's done isn't offered")
+  QP.char.done[88101] = nil
+  O:Invalidate()
+  list = O:ForMap(1411)
+  check(not offerOf(list, 88107), "a hand-in-only quest is never offered")
+  local mq = offerOf(list, 88109)
+  check(mq and mq.giver.name == "Quest giver" and mq.label == 2, "a map marker works as a giver, with its own label")
+  local classicQ = offerOf(list, 88002)
+  check(classicQ and classicQ.source == "classic" and classicQ.fdb and classicQ.giver.name, "a Classic-labelled quest stays labelled Classic")
+  local plainQ = offerOf(list, 88003)
+  check(plainQ and plainQ.source == "classic" and not plainQ.fdb, "a quest outside ForeverDB is plain Classic")
+  check(offerOf(O:ForMap(1460), 88108), "a zone only Forever has gets offers")
+  -- Learned and game sources stay first, and take the credit when they use the data.
+  local gameOffer = offerOf(list, 88001)
+  check(gameOffer and gameOffer.title == "New Title" and gameOffer.giver.name == "Seen Giver", "a changed giver is used")
+
+  -- /qd classic off keeps what was seen in Forever
+  QP:Slash("classic off")
+  list = O:ForMap(1411)
+  check(offerOf(list, 88101) and not offerOf(list, 88002) and not offerOf(list, 88003), "/qd classic off leaves what players saw")
+  QP:Slash("classic on")
+
+  -- Hand-ins
+  local e = O:Ender({ id = 88107, dbid = 88107 }, 1411)
+  check(e and e.name == "Seen Hand-in" and e.m == 1411 and e.fdb and e.label == 1, "a hand-in-only quest knows its hand-in, on your map first")
+  e = O:Ender({ id = 88107, dbid = 88107 })
+  check(e and e.m == 1454, "and elsewhere")
+  e = O:Ender({ id = 88001, dbid = 88001 }, 1411)
+  check(e and e.name == "Gornek" and e.label == 0 and e.fdb, "Classic hand-in keeps its label")
+
+  -- Credit and labels on screen
+  check(O:Credit() == CREDIT, "credit available")
+  QP.db.nearby = true
+  QP.db.nearbyMax = 50
+  if QP.Plan:Active() then QP.Plan:Stop(true) end
+  T:Refresh()
+  local cr = creditRow()
+  check(cr and cr.shown, "the credit shows under the list")
+  check(cr == T.rows[T.used], "at the very end")
+  local offerRow
+  for i = 1, T.used do if T.rows[i].offer and T.rows[i].offer.dbid == 88101 then offerRow = T.rows[i] end end
+  check(offerRow, "the new quest is in Pick up nearby")
+  if offerRow then
+    local tip = tipOf(offerRow)
+    check(tip:find("Seen in WoW Forever", 1, true), "tooltip label: " .. tip)
+    check(tip:find(CREDIT, 1, true), "tooltip credit")
+  end
+  local r = T:Acquire()
+  r.offer = classicQ
+  local tip = tipOf(r)
+  check(tip:find("Classic quest data", 1, true) and tip:find(CREDIT, 1, true), "Classic-labelled offer: label and credit: " .. tip)
+  r.offer = plainQ
+  tip = tipOf(r)
+  check(tip:find("Classic quest data", 1, true) and not tip:find(CREDIT, 1, true), "plain Classic offer needs no credit")
+  r.offer = mq
+  check(tipOf(r):find("From the Forever client", 1, true), "the client's marker says so")
+  r.offer = nil
+  r.stop = { kind = "npc", name = "Someone", turnins = {}, pickups = { { title = "A", fdb = true, label = 1 } } }
+  tip = tipOf(r)
+  check(tip:find("Seen in WoW Forever", 1, true) and tip:find(CREDIT, 1, true), "plan stop: label and credit")
+  r.stop.pickups[2] = { title = "B", fdb = true, label = 0 }
+  check(tipOf(r):lower():find("part seen in wow forever, part classic data", 1, true), "a mixed stop says so")
+  r.stop.pickups = { { title = "A" } }
+  tip = tipOf(r)
+  check(not tip:find(CREDIT, 1, true), "a stop not using the data has no credit")
+  table.insert(QUESTS, { id = 88107, title = "Hand In Only", level = 6, pin = { 1411, 0.3, 0.3 }, objectives = {} })
+  QP:Emit("QUESTS_CHANGED")
+  O:ReadLog()
+  r = T:Acquire() -- the list was redrawn
+  r.stop = { kind = "npc", name = "Someone", turnins = { 88107 }, pickups = {} }
+  tip = tipOf(r)
+  check(QP.Quests:Get(88107).dbid == 88107 and tip:find(CREDIT, 1, true) and tip:find("Seen in WoW Forever", 1, true), "a stop handing in uses the hand-in's label")
+  table.remove(QUESTS)
+  QP:Emit("QUESTS_CHANGED")
+  r = T:Acquire()
+  r.hub = { zone = "Far", count = 2, npc = "Someone", turnins = 0 }
+  check(tipOf(r):find(CREDIT, 1, true), "next-zone tooltip credit")
+  r.hub = nil
+  r.away = { title = "Far Quest", npc = "Someone", zone = "Far", m = 1454 }
+  check(tipOf(r):find(CREDIT, 1, true), "hand-in elsewhere tooltip credit")
+  r.away = nil
+
+  before = #chat
+  QP:Slash("data")
+  local said = table.concat(chat, "\n", before + 1)
+  check(said:find("Forever data: 10 quests, 9 seen in WoW Forever", 1, true), "/qd data counts it: " .. said)
+  check(said:find("build 9.9, made 2026-01-01", 1, true), "and says how old it is")
+  check(said:find(CREDIT, 1, true), "and credits it")
+
+  -- Loading the add-on with the file there lays it over without being asked.
+  ns.ForeverData = { build = "9.9", made = "2026-01-01", credit = CREDIT, n = {}, p = {},
+    q = { [88201] = { "Loaded With The File", 6, 2, 178, 0, "", "700001", "700001", 1, 1 } } }
+  assert(loadfile(DIR .. "/Offers.lua"))("QuestDirect", ns)
+  check(D.q[88201] and D.q[88201][1] == "Loaded With The File", "the file applies itself at load")
+end
 
 print(string.format("\n%d passed, %d failed, %d errors", passed, failed, #errors))
 for _, e in ipairs(errors) do print("ERROR: " .. e) end

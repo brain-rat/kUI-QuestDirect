@@ -28,7 +28,7 @@ Flat frames in the shared style replace Blizzard's player, target, target-of-tar
 
 ## Action bars
 
-Flat, square bars replace the game's: up to eight action bars (as many as the client has), plus the stance, pet and Shaman totem bars, and the menu and bag buttons. Your spells and keys stay where they are, because the bars use the game's own action slots and key bindings.
+Flat, square bars replace the game's: up to eight action bars (as many as the client has), plus the stance, pet and Shaman totem bars, the menu and bag buttons, and XP and reputation bars. Your spells and keys stay where they are, because the bars use the game's own action slots and key bindings.
 
 - **The look:** cropped square icons on a dark slot with a thin border. No end caps or other artwork.
 - **Which bars start on:** Bar 1, any bar the game was showing, and any bar with something on it. After that it's your choice.
@@ -57,7 +57,7 @@ The **All bars** card has red icons out of range and the proc glow. **Copy look 
 
 **The totem bar** has the same flat buttons, with a border in each totem's colour: fire, earth, water and air. It sets its size, gaps, rows, text and visibility the same way. A spell or totem you don't have yet doesn't leave a gap. Totem keys stay the game's own, and the flyout that picks a totem still opens above each button.
 
-**Menu and bag buttons** have their own **Menu & bags** tab. Pick a bar at the top, or click its overlay:
+**Menu and bag buttons, and the XP and reputation bars,** have their own **Menu, bags, XP** tab. Pick a bar at the top, or click its overlay:
 
 | Setting | What it does |
 |---|---|
@@ -69,8 +69,13 @@ The **All bars** card has red icons out of range and the proc glow. **Copy look 
 | Menu buttons | Take any menu button off the bar. The others close up |
 | Bag slots, reagent bag, key ring | Take these off the bag bar. The backpack always stays |
 | Free bag slots, free slots size | The count on the backpack |
+| Width, height | The size of the XP or reputation bar |
+| Numbers, number size | Your XP or standing on the bar: always, on hover, or off |
+| Rested XP | The lighter part past the end of your XP |
 
 A menu button lights up while its window is open, and the game's alerts still flash on it. The menu goes back to the game for its vehicle bar and pet battles, and comes back afterwards.
+
+The XP bar steps aside at top level or with XP turned off. The reputation bar shows the faction you're watching, in its standing's colour, and steps aside when you aren't watching one. It starts at the top of the screen, out of the way of your action bars. Clicks pass through either bar unless its numbers are set to show on hover.
 
 `/kui bars off` and `/reload` give you the game's bars back.
 
@@ -153,7 +158,7 @@ Items are the game's own bag slots, so everything works as normal: click, drag, 
 
 ### Bank
 
-Talk to a banker and the bank opens in the same style next to your bags. It has its bank slots and bank bags, a **Buy bag slot** button while you have bank bag slots left to buy, and the same search. Closing either window closes the banker.
+Talk to a banker and the bank opens in the same style, with your bags beside it, and both close when you leave unless your bags were already open. All your tabs show together in categories, with the same search. Right-click an item to move it across, or drag it. A button at the bottom buys your next tab and shows what it costs, or claims your free first one. The game asks you to confirm either way. Warband tabs show too if you can see them, but a right-click from your bags goes to your own tabs, so drag items to a warband tab.
 
 ### Settings
 
@@ -316,7 +321,7 @@ The loot window is replaced with a QuestDirect-style one:
 | `/kui loot on` / `off` | Use the kUI loot window or the game's (needs `/reload`) |
 | `/kui map on` / `off` | Square minimap or the game's (needs `/reload`) |
 | `/kui bags on` / `off` | kUI bags or the game's (needs `/reload`) |
-| `/kui bank on` / `off` | kUI bank window or the game's (needs `/reload`) |
+| `/kui bank on` / `off` | kUI's bank window or the game's (needs `/reload`) |
 | `/kui bags` | Open the bag settings |
 | `/kui bags gapx 6` / `gapy 6` / `gap 6` | Horizontal, vertical or both gaps |
 | `/kui bags cols 12` / `size 40` / `scale 1.1` | Columns, slot size, scale |
@@ -350,7 +355,7 @@ The loot window is replaced with a QuestDirect-style one:
   - Unit frames: Blizzard's frames hidden and silent, totems moved out, secure click setup, health, power, level, tags, colours, two-part player names, raid marker, Dead, Ghost and Offline, target-of-target and pet, buffs and debuffs, combo pips, moving, scale, closing on combat, waiting for combat to end after a `/reload`.
   - Edit mode: every setting through the panel's own buttons, one frame's change not touching another, limits, flat and 3D portraits, elite and rare preview, frame reset, older settings carrying over, nothing changing in combat, Done, Esc and combat closing it.
   - Castbar: casts, channels, pushback, finishing, failed and interrupted, another spell's failure not ending a cast, can't-interrupt colour, a new target, the sample.
-  - Action bars, mostly outside the game, with the layout, keys, menu and bag buttons seen working in game: which bars start on, the game's bars retired, slots, keys and shortened key names, layout in every direction, paging, vehicle and form pages, the secure snippets, visibility, hover fading, empty slots, range, procs, stance, pet and totem bars, the menu and bag buttons (the game redrawing them, laying them out, or borrowing the menu for its vehicle bar), quick keybinds opened from kUI or the game, every setting through the panel, typed values, copy and reset, nothing secure changing in combat.
+  - Action bars, mostly outside the game, with the layout, keys, menu and bag buttons seen working in game: which bars start on, the game's bars retired, slots, keys and shortened key names, layout in every direction, paging, vehicle and form pages, the secure snippets, visibility, hover fading, empty slots, range, procs, stance, pet and totem bars, the menu and bag buttons (the game redrawing them, laying them out, or borrowing the menu for its vehicle bar), quick keybinds opened from kUI or the game, XP, rested XP and reputation, every setting through the panel, typed values, copy and reset, nothing secure changing in combat.
   - Secret values: health, power, names, levels, auras and casts as secret values, with any maths or text work on them in Lua failing the test.
   - Rares: Classic spawn points placed and pinned, nameplate, mouseover and map-marker alerts, normal mobs ignored, level and position, model, sound, flash, no repeats, skull on target, kills, waypoint, the target button waiting for combat to end, ignore, the zone list.
   - Tooltips: panel, hidden Blizzard frame, old-style backdrops, health bar, font, rarity border and its reset, item level, vendor price (and not when the game shows one), drop lines best-first with chests by name, turning lines off.
@@ -366,9 +371,11 @@ The loot window is replaced with a QuestDirect-style one:
 - If the game blocks kUI ("Interface action failed because of an AddOn"), kUI prints what was blocked in chat. That line is what I need.
 - The unit frames replace Blizzard's completely, so anything of Blizzard's that lived inside them only comes back if kUI rebuilds it. Not in yet: a Druid's mana bar while shapeshifted, and heal and absorb bars on health. `/kui frames off` and `/reload` gives you Blizzard's frames back.
 - The action bars follow the approach Dominos uses on this client, checked against the game's own interface code. Add-ons that skin or replace the game's action bars, like Dominos or Bartender, will clash: use one or the other.
-- If the menu or bag bar can't be set up, kUI says so in chat and leaves those buttons as the game has them. Your action bars carry on. That chat line is what I need.
+- If the menu, bag, XP or reputation bar can't be set up, kUI says so in chat and leaves that part as the game has it. Your action bars carry on. That chat line is what I need.
+- kUI's XP and reputation bars replace the frame the game keeps all its progress bars in, so the game's honor and house favor bars don't show while kUI's action bars are on. `/kui bars off` and `/reload` give them back.
+- The game can refuse add-ons a target's auras during a fight. When it does, the target's aura icons disappear until the auras next change or combat ends.
 - If using an item from your bags in combat ever shows "Interface action failed because of an AddOn", tell me. Bag add-ons occasionally hit that and it has a known fix.
-- Not in yet: the bank's own row for equipping bank bags (`/kui bank off` and `/reload` gives you Blizzard's bank for that), the keyring, and custom categories.
+- Not in yet: choosing which warband tab a deposit goes to, the keyring, and custom categories.
 
 ## Files
 
@@ -379,7 +386,7 @@ The loot window is replaced with a QuestDirect-style one:
 | `Core.lua` | Settings and `/kui` |
 | `UnitFrames.lua` | Player, target, target-of-target and pet frames, target auras, combo pips |
 | `Castbar.lua` | Cast bars for you and your target |
-| `ActionBars.lua` | Action, stance, pet and totem bars, and the menu and bag buttons |
+| `ActionBars.lua` | Action, stance, pet and totem bars, the menu and bag buttons, and the XP and reputation bars |
 | `Controls.lua` | The settings controls: sliders, switches, choices, cards, buttons |
 | `EditMode.lua` | The edit mode's settings window |
 | `MinimapIcon.lua` | The minimap icon and its menu |

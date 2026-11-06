@@ -78,7 +78,24 @@ local function BagIDs()
   return t
 end
 
+-- A bank made of tabs you buy: the ones you have, then any warband tabs you can see.
+local function BankTabIDs()
+  local bank, types = _G.C_Bank, Enum and Enum.BankType
+  if not (bank and types and bank.FetchPurchasedBankTabData) then return nil end
+  local t = {}
+  local function add(kind)
+    if kind and bank.CanViewBank(kind) then
+      for _, tab in ipairs(bank.FetchPurchasedBankTabData(kind) or {}) do t[#t + 1] = tab.ID end
+    end
+  end
+  add(types.Character)
+  add(types.Account)
+  return t
+end
+
 local function BankIDs()
+  local tabs = BankTabIDs()
+  if tabs then return tabs end
   local t = { BANK_CONTAINER or -1 }
   for i = 1, (NUM_BANKBAGSLOTS or 6) do t[#t + 1] = EQUIPPED + i end
   local E = Enum and Enum.BagIndex
@@ -160,11 +177,9 @@ function B:NewButton(win, bag, slot)
   local name = ("KUI%sItem%s_%d"):format(win.kind == "bank" and "Bank" or "Bag", bag < 0 and ("m" .. -bag) or bag, slot)
   local b = _G[name] or CreateFrame(ButtonType(), name, self:Holder(win, bag), "ContainerFrameItemButtonTemplate")
   b:SetID(slot)
-  if b.SetBagID then pcall(b.SetBagID, b, bag) end
-  if b.GetBagID then
-    local ok, id = pcall(b.GetBagID, b)
-    if not ok or id ~= bag then b.bagID = bag end
-  end
+  -- The bag number comes from the holder's ID, never b:SetBagID or b.bagID. The game
+  -- reads that field right before it uses the item, and a value kUI wrote there makes its
+  -- click count as add-on code, which it blocks for anything that casts, like a Hearthstone.
   b.fuiBag, b.fuiSlot = bag, slot
 
   -- Our look instead of the slot art.
@@ -318,7 +333,14 @@ function B:Window(kind)
     f.cog:SetPoint("RIGHT", right, "LEFT", -2, 0)
     right = f.cog
   end
-  local sortFn = kind == "bank" and (CC and CC.SortBankBags or SortBankBags) or (CC and CC.SortBags or SortBags)
+  local sortFn
+  if kind ~= "bank" then
+    sortFn = CC and CC.SortBags or SortBags
+  elseif CC and CC.SortBank and Enum and Enum.BankType then
+    sortFn = function() CC.SortBank(Enum.BankType.Character) end
+  else
+    sortFn = CC and CC.SortBankBags or SortBankBags
+  end
   if sortFn then
     f.sort = S.Button(header, "Sort", 36, function() pcall(sortFn) end, "Tidy the items in your bags")
     f.sort:SetPoint("RIGHT", right, "LEFT", -2, 0)
@@ -360,12 +382,7 @@ function B:Window(kind)
   f.info:SetPoint("BOTTOMLEFT", PAD, 7)
   f.info:SetTextColor(0.6, 0.6, 0.6)
 
-  if kind == "bank" and PurchaseSlot and GetNumBankSlots then
-    f.buy = S.Button(f, "Buy bag slot", 90, function()
-      if StaticPopup_Show then StaticPopup_Show("CONFIRM_BUY_BANK_SLOT") end
-    end, "Buy another bank bag slot")
-    f.buy:SetPoint("BOTTOMLEFT", PAD - 2, 4)
-  end
+  if kind == "bank" then self:MakeBuyButton(f) end
 
   f:SetScript("OnShow", function()
     B:Layout(win)
@@ -378,8 +395,8 @@ function B:Window(kind)
       if PlaySound and SOUNDKIT and SOUNDKIT.IG_BACKPACK_CLOSE then PlaySound(SOUNDKIT.IG_BACKPACK_CLOSE) end
       if C_NewItems and C_NewItems.ClearAll then C_NewItems.ClearAll() end
       if B.settings then B.settings:Hide() end
-    elseif B.bankOpen and CloseBankFrame then
-      CloseBankFrame()
+    elseif B.bankOpen then
+      B:CloseBanker()
     end
   end)
 
@@ -387,6 +404,97 @@ function B:Window(kind)
   self.windows[kind] = win
   self:Place(win)
   return win
+end
+
+-- The game's own script for buying a tab, on our button. It runs the game's own
+-- confirmation, which add-on code couldn't do itself. Its OnClick has to stay as it is.
+function B:MakeBuyButton(f)
+  local types = Enum and Enum.BankType
+  local ok, b = false, nil
+  if types and _G.C_Bank then
+    ok, b = pcall(CreateFrame, "Button", nil, f, "BankPanelPurchaseButtonScriptTemplate")
+  end
+  if ok and b then
+    b:SetAttribute("overrideBankType", types.Character)
+    b:SetHeight(18)
+    b:SetPoint("BOTTOMLEFT", PAD - 2, 4)
+    local bg = S.Tex(b, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetColorTexture(S.ACCENT[1], S.ACCENT[2], S.ACCENT[3], 0.2)
+    S.ColorEdges(S.Edges(b, "BORDER"), S.SOFT[1], S.SOFT[2], S.SOFT[3], 1)
+    S.Highlight(b, 0.08)
+    b.text = S.UIText(b, nil, "CENTER", nil, 12)
+    b.text:SetPoint("CENTER")
+    b.tabs = true
+    f.buy = b
+  elseif PurchaseSlot and GetNumBankSlots then -- the older bank, on other clients
+    f.buy = S.Button(f, "Buy bag slot", 90, function()
+      if StaticPopup_Show then StaticPopup_Show("CONFIRM_BUY_BANK_SLOT") end
+    end, "Buy another bank bag slot")
+    f.buy:SetPoint("BOTTOMLEFT", PAD - 2, 4)
+  end
+end
+
+-- What the next tab costs, if there is one to buy.
+function B:NextTab()
+  local bank, types = _G.C_Bank, Enum and Enum.BankType
+  if not (bank and types and bank.FetchNextPurchasableBankTabData) then return nil end
+  local kind = types.Character
+  if bank.FetchNumPurchasedBankTabs(kind) >= bank.FetchMaxNumBankTabs(kind) then return nil end
+  return bank.FetchNextPurchasableBankTabData(kind)
+end
+
+function B:UpdateBuy(f)
+  local b = f.buy
+  if not b then return end
+  if not b.tabs then
+    local have, cost = GetNumBankSlots()
+    b:SetShown(not cost and have < (NUM_BANKBAGSLOTS or 6))
+    return
+  end
+  local tab = self:NextTab()
+  b:SetShown(tab ~= nil)
+  if not tab then return end
+  local cost = tab.tabCost or 0
+  if cost > 0 then
+    b.text:SetText("Buy bank tab: " .. (GetCoinTextureString and GetCoinTextureString(cost) or tostring(cost)))
+  else
+    b.text:SetText("Claim your free bank tab")
+  end
+  if tab.canAfford == false then
+    b.text:SetTextColor(0.9, 0.35, 0.3)
+  else
+    b.text:SetTextColor(1, 1, 1)
+  end
+  b:SetWidth(b.text:GetStringWidth() + 20)
+end
+
+function B:UsesOwnBank()
+  return ns.db.bank and BankFrame ~= nil
+end
+
+function B:CloseBanker()
+  local close = _G.C_Bank and _G.C_Bank.CloseBankFrame or _G.CloseBankFrame
+  if close then close() end
+end
+
+-- The game opens its own window however you reach a banker, so both signals lead here.
+function B:BankerOpened()
+  if self.bankOpen then return end
+  self.bankOpen = true
+  local bags = self:Window("bags")
+  self.bankOpenedBags = not bags.frame:IsShown()
+  self:Window("bank").frame:Show()
+  self:Open()
+end
+
+function B:BankerClosed()
+  if not self.bankOpen then return end
+  self.bankOpen = false
+  local bank = self.windows.bank
+  if bank and bank.frame:IsShown() then bank.frame:Hide() end
+  if self.bankOpenedBags then self:Close() end
+  self.bankOpenedBags = nil
 end
 
 function B:Place(win)
@@ -548,11 +656,8 @@ function B:Layout(win)
   f:SetHeight(HEADER_H + PAD - 2 + max(size, y) + PAD + FOOTER_H)
   f.free:SetText(("%d/%d"):format(total - #empty, total))
   f.money:SetText(win.kind == "bags" and Money() or "")
+  self:UpdateBuy(f)
   f.info:SetText(f.buy and f.buy:IsShown() and "" or (#empty .. " free"))
-  if f.buy then
-    local have, cost = GetNumBankSlots()
-    f.buy:SetShown(not cost and have < (NUM_BANKBAGSLOTS or 6))
-  end
   self:Search(win, f.search:GetText() or "")
   if self.pendingButtons then self:Retry(win) end
 end
@@ -615,40 +720,73 @@ function B:Toggle()
   if win.frame:IsShown() then self:Close() else self:Open() end
 end
 
-function B:TakeOver()
-  self.originals = {
-    OpenAllBags = OpenAllBags, CloseAllBags = CloseAllBags, ToggleAllBags = ToggleAllBags,
-    ToggleBackpack = ToggleBackpack, OpenBackpack = OpenBackpack, CloseBackpack = CloseBackpack,
-    ToggleBag = ToggleBag, OpenBag = OpenBag, CloseBag = CloseBag,
-  }
-  OpenAllBags = function() B:Open() end
-  CloseAllBags = function() B:Close() end
-  ToggleAllBags = function() B:Toggle() end
-  ToggleBackpack = function() B:Toggle() end
-  OpenBackpack = function() B:Open() end
-  CloseBackpack = function() B:Close() end
-  ToggleBag = function(id)
-    if B.bankOpen and id and id > EQUIPPED then return end
-    B:Toggle()
-  end
-  OpenBag = function() B:Open() end
-  CloseBag = function() end
-  IsBagOpen = function(id)
-    local win = B.windows.bags
-    if id and id > EQUIPPED then
-      local bank = B.windows.bank
-      return bank and bank.frame:IsShown() or false
+-- kUI follows the game's bag functions rather than replacing them. Everything the game
+-- does after calling a replaced function counts as add-on code, and the game blocks some
+-- of that: its bank opens the bags, then claims your free first bag slot.
+--
+-- These functions also call each other, and a hook only runs once its function is done,
+-- so the outermost one reports last. Toggling your bags closes them piece by piece
+-- first. So each report replaces the one before, and the last is acted on just after.
+local FOLLOW = {
+  OpenAllBags = "open", OpenBackpack = "open", OpenBag = "open",
+  CloseAllBags = "close", CloseBackpack = "close",
+  ToggleAllBags = "toggle", ToggleBackpack = "toggle",
+}
+
+function B:Follow(what)
+  self.following = what
+  if self.followQueued then return end
+  self.followQueued = true
+  C_Timer.After(0, function()
+    B.followQueued = nil
+    local act = B.following
+    B.following = nil
+    if act == "open" then
+      B:Open()
+    elseif act == "close" then
+      B:Close()
+    elseif act == "toggle" then
+      B:Toggle()
     end
-    return win and win.frame:IsShown() or false
+  end)
+end
+
+-- The game's bag windows still open and close as far as it knows, out of sight. Under a
+-- hidden parent none of their show and hide code runs, and that's what kUI would be
+-- running as add-on code if it hid them itself.
+function B:PutAwayGameBags()
+  if InCombatLockdown() then
+    self.putAwayPending = true
+    return
   end
-  -- Blizzard's own bag windows, if something opens them anyway.
+  self.putAwayPending = nil
+  local hidden = S.HiddenParent()
   for i = 1, (NUM_CONTAINER_FRAMES or 13) do
     local cf = _G["ContainerFrame" .. i]
-    if cf and cf.HookScript then cf:HookScript("OnShow", function(self) self:Hide() end) end
+    if cf then cf:SetParent(hidden) end
   end
-  if ContainerFrameCombinedBags and ContainerFrameCombinedBags.HookScript then
-    ContainerFrameCombinedBags:HookScript("OnShow", function(self) self:Hide() end)
+  if ContainerFrameCombinedBags then ContainerFrameCombinedBags:SetParent(hidden) end
+  -- The game still opens its bank window as far as it knows, which its own item clicks
+  -- check, but none of its code for showing it runs.
+  if self.ownBank and BankFrame then BankFrame:SetParent(hidden) end
+end
+
+function B:TakeOver()
+  for name, what in pairs(FOLLOW) do
+    if type(_G[name]) == "function" then
+      hooksecurefunc(name, function() B:Follow(what) end)
+    end
   end
+  if type(_G.ToggleBag) == "function" then
+    hooksecurefunc("ToggleBag", function(id)
+      if B.bankOpen and id and id > EQUIPPED then
+        B.following = nil
+      else
+        B:Follow("toggle")
+      end
+    end)
+  end
+  self:PutAwayGameBags()
 end
 
 ------------------------------------------------------------------------
@@ -761,22 +899,26 @@ function B:Enable()
   end
   local any = next(win.buttons[0] or {}) and win.buttons[0][1]
   self.protected = any and any.IsProtected and any:IsProtected() or false
+  self.ownBank = self:UsesOwnBank()
   self:TakeOver()
 
   local ev = CreateFrame("Frame")
   for _, e in ipairs({ "BAG_UPDATE", "BAG_UPDATE_DELAYED", "ITEM_LOCK_CHANGED", "BAG_UPDATE_COOLDOWN",
                        "PLAYER_MONEY", "GET_ITEM_INFO_RECEIVED", "QUEST_ACCEPTED", "QUEST_REMOVED",
                        "BAG_NEW_ITEMS_UPDATED", "PLAYER_REGEN_ENABLED", "PLAYERBANKSLOTS_CHANGED",
-                       "BANKFRAME_OPENED", "BANKFRAME_CLOSED", "INVENTORY_SEARCH_UPDATE" }) do
+                       "BANKFRAME_OPENED", "BANKFRAME_CLOSED", "INVENTORY_SEARCH_UPDATE",
+                       "BANK_TABS_CHANGED", "PLAYER_ACCOUNT_BANK_TAB_SLOTS_CHANGED", "BAG_CONTAINER_UPDATE",
+                       "PLAYER_INTERACTION_MANAGER_FRAME_SHOW", "PLAYER_INTERACTION_MANAGER_FRAME_HIDE" }) do
     pcall(ev.RegisterEvent, ev, e)
   end
-  if ns.db.bank and BankFrame then
-    pcall(BankFrame.UnregisterEvent, BankFrame, "BANKFRAME_OPENED")
-    self.ownBank = true
+  local function IsBanker(kind)
+    local types = Enum and Enum.PlayerInteractionType
+    return types and kind and (kind == types.Banker or kind == types.AccountBanker)
   end
   ev:SetScript("OnEvent", function(_, event, a1, a2)
     if event == "BAG_UPDATE_DELAYED" or event == "BAG_NEW_ITEMS_UPDATED" or event == "QUEST_ACCEPTED"
-       or event == "QUEST_REMOVED" or event == "PLAYERBANKSLOTS_CHANGED" then
+       or event == "QUEST_REMOVED" or event == "PLAYERBANKSLOTS_CHANGED" or event == "BANK_TABS_CHANGED"
+       or event == "PLAYER_ACCOUNT_BANK_TAB_SLOTS_CHANGED" or event == "BAG_CONTAINER_UPDATE" then
       LayoutSoon()
     elseif event == "BAG_UPDATE" then
       for _, w in pairs(B.windows) do w.dirty = true end
@@ -797,24 +939,22 @@ function B:Enable()
     elseif event == "PLAYER_MONEY" then
       local w = B.windows.bags
       if w then w.frame.money:SetText(Money()) end
+      local bank = B.windows.bank
+      if bank and bank.frame:IsShown() then B:UpdateBuy(bank.frame) end
     elseif event == "GET_ITEM_INFO_RECEIVED" then
       if B.missingNames then LayoutSoon(0.3) end
     elseif event == "PLAYER_REGEN_ENABLED" then
+      if B.putAwayPending then B:PutAwayGameBags() end
       if B.pendingButtons then
         B.pendingButtons = false
         LayoutShown()
       else
         for _, w in pairs(B.windows) do if w.dirty and w.frame:IsShown() then B:Layout(w) end end
       end
-    elseif event == "BANKFRAME_OPENED" and B.ownBank then
-      B.bankOpen = true
-      local bank = B:Window("bank")
-      bank.frame:Show()
-      B:Open()
-    elseif event == "BANKFRAME_CLOSED" and B.ownBank then
-      B.bankOpen = false
-      local bank = B.windows.bank
-      if bank and bank.frame:IsShown() then bank.frame:Hide() end
+    elseif event == "BANKFRAME_OPENED" or (event == "PLAYER_INTERACTION_MANAGER_FRAME_SHOW" and IsBanker(a1)) then
+      if B.ownBank then B:BankerOpened() end
+    elseif event == "BANKFRAME_CLOSED" or (event == "PLAYER_INTERACTION_MANAGER_FRAME_HIDE" and IsBanker(a1)) then
+      if B.ownBank then B:BankerClosed() end
     end
   end)
 end

@@ -124,3 +124,112 @@ func TestDailyHeader(t *testing.T) {
 		t.Fatal("dailyLeft")
 	}
 }
+
+// The real API's answers: X-Daily-Remaining, and a message that doesn't say "daily".
+func TestDailyLimitFromRealHeaders(t *testing.T) {
+	minute := []byte(`{"error":{"code":"rate_limit","message":"Slow down: this key allows 60 requests a minute."}}`)
+	h := http.Header{}
+	h.Set("X-Daily-Remaining", "0")
+	if !isDailyLimit(h, minute) {
+		t.Fatal("0 left today is the daily limit")
+	}
+	h.Set("X-Daily-Remaining", "9000")
+	if isDailyLimit(h, minute) {
+		t.Fatal("the per-minute limit with plenty left today only needs a wait")
+	}
+
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("X-Daily-Remaining", "0")
+		w.Header().Set("Retry-After", "0")
+		w.WriteHeader(429)
+		w.Write(minute)
+	}))
+	defer srv.Close()
+	c := &client{key: "k", http: srv.Client(), interval: time.Millisecond, base: srv.URL}
+	if _, err := c.get("/quests", nil); !errors.Is(err, errDaily) {
+		t.Fatalf("stops at the daily limit: %v", err)
+	}
+	if atomic.LoadInt32(&calls) != 1 {
+		t.Fatal("it shouldn't keep asking once the day is used up")
+	}
+}
+
+// questServer lists n quests, whole or bare, and counts requests for single quests.
+func questServer(n int, whole func(i int) bool, pages *int32) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/quests/") {
+			atomic.AddInt32(pages, 1)
+			json.NewEncoder(w).Encode(map[string]interface{}{"data": map[string]interface{}{"id": strings.TrimPrefix(r.URL.Path, "/quests/")}})
+			return
+		}
+		var data []map[string]interface{}
+		for i := 0; i < n; i++ {
+			row := map[string]interface{}{"id": 1000 + i, "name": fmt.Sprintf("Q%d", i)}
+			if whole(i) {
+				row["starts"], row["ends"], row["chain"] = map[string]interface{}{"id": 1}, nil, map[string]interface{}{}
+			}
+			data = append(data, row)
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"data": data, "meta": map[string]interface{}{"total": n, "build": "1.60.1"}})
+	}))
+}
+
+func TestQuestsSkipsPagesWhenTheListHasItAll(t *testing.T) {
+	always := func(int) bool { return true }
+	cases := []struct {
+		name  string
+		whole func(int) bool
+		force bool
+		pages int32
+	}{
+		{"whole list", always, false, 0},
+		{"asked for pages", always, true, 3},
+		{"bare list falls back", func(int) bool { return false }, false, 3},
+		{"one bare row falls back", func(i int) bool { return i != 2 }, false, 3},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var pages int32
+			srv := questServer(3, tc.whole, &pages)
+			defer srv.Close()
+			dir := t.TempDir()
+			c := &client{key: "k", http: srv.Client(), interval: time.Millisecond, base: srv.URL}
+			total, n, err := c.quests(nil, dir, tc.force, false)
+			if err != nil || total != 3 {
+				t.Fatalf("quests: %v %d", err, total)
+			}
+			if atomic.LoadInt32(&pages) != tc.pages || int32(n) != tc.pages {
+				t.Fatalf("pages fetched %d, counted %d, wanted %d", pages, n, tc.pages)
+			}
+			var saved struct {
+				Meta map[string]interface{}   `json:"meta"`
+				Data []map[string]interface{} `json:"data"`
+			}
+			b, err := os.ReadFile(filepath.Join(dir, "quests_list.json"))
+			if err != nil || json.Unmarshal(b, &saved) != nil {
+				t.Fatalf("list not saved: %v", err)
+			}
+			if len(saved.Data) != 3 || saved.Meta["build"] != "1.60.1" {
+				t.Fatalf("saved list: %s", b)
+			}
+		})
+	}
+}
+
+func TestListIsComplete(t *testing.T) {
+	row := func(s string) json.RawMessage { return json.RawMessage(s) }
+	whole := row(`{"id":1,"starts":null,"ends":{},"chain":{}}`)
+	if !listIsComplete([]json.RawMessage{whole, whole}) {
+		t.Fatal("a null field still means the list has it")
+	}
+	if listIsComplete(nil) {
+		t.Fatal("an empty list isn't complete")
+	}
+	for _, bad := range []string{`{"id":1,"ends":{},"chain":{}}`, `{"id":1,"starts":{},"chain":{}}`, `{"id":1,"starts":{},"ends":{}}`, `[1]`} {
+		if listIsComplete([]json.RawMessage{whole, row(bad)}) {
+			t.Fatalf("incomplete row accepted: %s", bad)
+		}
+	}
+}

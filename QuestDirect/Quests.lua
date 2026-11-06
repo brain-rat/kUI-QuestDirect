@@ -106,7 +106,8 @@ function Q:Target(questID)
   return nil
 end
 
--- Tracker order: your zone first, then the rest; inside a zone, by distance.
+-- Tracker order: your zone first, then the rest; inside a zone, the plan's order if
+-- there is one, otherwise the quests best for your level first, then by distance.
 function Q:Sorted()
   local zoneName = self:ZoneName(self:PlayerMap())
   local groups, order = {}, {}
@@ -126,6 +127,9 @@ function Q:Sorted()
   end)
   local routeRank = {}
   for i, id in ipairs(QP.char.route or {}) do routeRank[id] = i end
+  local O, me = QP.Offers, QP.Offers:Me()
+  local bands = {}
+  for _, q in ipairs(self.list) do bands[q.id] = O:QuestBand(q, me) end
   for _, z in ipairs(order) do
     table.sort(groups[z], function(a, b)
       local ra, rb = routeRank[a.id], routeRank[b.id]
@@ -133,6 +137,7 @@ function Q:Sorted()
         if ra and rb then return ra < rb end
         return ra ~= nil
       end
+      if bands[a.id] ~= bands[b.id] then return bands[a.id] < bands[b.id] end
       local da, db = a.distance or math.huge, b.distance or math.huge
       if da ~= db then return da < db end
       return a.title < b.title

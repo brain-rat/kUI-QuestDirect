@@ -187,7 +187,44 @@ BankFrame = new("Frame", "BankFrame")
 BankFrame:RegisterEvent("BANKFRAME_OPENED")
 BankFrame.scripts.OnEvent = function() BankFrame.blizzOpened = true end
 ContainerFrame1 = new("Frame", "ContainerFrame1")
+ContainerFrameCombinedBags = new("Frame", "ContainerFrameCombinedBags")
 PlaySound = function() end
+-- The game's bag functions, which call each other just as the real ones do.
+gameBags = { open = false, ran = {} }
+function gameBagRan(name) gameBags.ran[name] = (gameBags.ran[name] or 0) + 1 end
+function OpenBackpack() gameBagRan("OpenBackpack"); gameBags.open = true end
+function CloseBackpack() gameBagRan("CloseBackpack"); gameBags.open = false end
+function OpenBag() gameBagRan("OpenBag"); gameBags.open = true end
+function CloseBag() gameBagRan("CloseBag") end
+function OpenAllBags()
+  gameBagRan("OpenAllBags")
+  if gameBags.open then return end
+  OpenBackpack()
+  for i = 1, 4 do OpenBag(i) end
+end
+function CloseAllBags()
+  gameBagRan("CloseAllBags")
+  CloseBackpack()
+  for i = 1, 4 do CloseBag(i) end
+end
+function ToggleAllBags()
+  gameBagRan("ToggleAllBags")
+  if gameBags.open then
+    CloseBackpack()
+    for i = 1, 4 do CloseBag(i) end
+  else
+    OpenBackpack()
+    for i = 1, 4 do OpenBag(i) end
+  end
+end
+function ToggleBackpack()
+  gameBagRan("ToggleBackpack")
+  if gameBags.open then CloseAllBags() else OpenBackpack() end
+end
+function ToggleBag(id)
+  gameBagRan("ToggleBag")
+  if gameBags.open then CloseAllBags() else OpenBag(id) end
+end
 
 -- Tooltips world
 GameTooltip.NineSlice = new("Frame")
@@ -310,9 +347,15 @@ function Mock:SetSwipeColor(...) self.swipe = { ... } end
 function Mock:Clear() self.cleared = true end
 function Mock:SetFrameStrata(s) self.strata = s end
 function Mock:EnableMouse(v) self.mouseOn = v end
+function Mock:SetBagID(id) self.bagID = id end -- as the game's own: kUI must never call this
+function Mock:GetStringWidth() return #(self.text or "") * 6 end
 local baseHook = hooksecurefunc
+hookedGlobals = {}
 function hooksecurefunc(t, k, fn)
-  if type(t) == "string" then return baseHook(_G, t, k) end
+  if type(t) == "string" then
+    hookedGlobals[t] = true
+    return baseHook(_G, t, k)
+  end
   return baseHook(t, k, fn)
 end
 local barKeys, barActions, equipped = {}, {}, {}
@@ -417,6 +460,18 @@ function MultiCastActionBarFrame_Update(self)
   MultiCastSlotButton1:SetPoint("BOTTOMLEFT", self, "BOTTOMLEFT", 41, 3)
   MultiCastRecallSpellButton:SetPoint("LEFT", MultiCastSlotButton4, "RIGHT", 8, 0)
 end
+-- The XP and reputation numbers.
+local xpNow = { value = 300, top = 1000, rested = 200, show = true }
+local watched = nil
+function UnitXP() return xpNow.value end
+function UnitXPMax() return xpNow.top end
+function GetXPExhaustion() return xpNow.rested end
+GameRulesUtil = { CanShowExperienceBar = function() return xpNow.show end }
+C_Reputation = { GetWatchedFactionData = function() return watched end }
+FACTION_BAR_COLORS = { [5] = { r = 0, g = 0.6, b = 0.1 } }
+FACTION_STANDING_LABEL5 = "Friendly"
+StatusTrackingBarManager = new("Frame", "StatusTrackingBarManager", UIParent)
+StatusTrackingBarManager:RegisterEvent("PLAYER_XP_UPDATE")
 -- The game's quick keybind mode. Closing it opens the game's settings.
 QuickKeybindFrame = new("Button", "QuickKeybindFrame", UIParent)
 QuickKeybindFrame.shown = false
@@ -467,9 +522,13 @@ local function bagButton(name)
   b.SlotHighlightTexture = b:CreateTexture()
   b.Count = b:CreateFontString()
   b.art = b:CreateTexture()
-  b.GetNormalTexture = function(self) return self.art end
+  -- As in the game: once this texture is moved off the button, the button has none.
+  b.GetNormalTexture = function(self)
+    if self.art.parent == nil or self.art.parent == self then return self.art end
+  end
   -- What the game does on any bag change: back to its own art.
   b.UpdateTextures = function(self)
+    self:GetNormalTexture().atlas = "game"
     self:GetHighlightTexture().atlas = "game"
     self:GetHighlightTexture().ctex = nil
     self:GetPushedTexture().ctex = nil
@@ -617,8 +676,11 @@ for bag, list in pairs(bagsWin.buttons) do for _ in pairs(list) do made = made +
 check(made == 26, "a button for every slot, made at login: " .. made)
 local b02 = bagsWin.buttons[0][2]
 check(b02.template and b02.id == 2 and b02.parent.id == 0, "the game's own container buttons: slot id, bag id on the holder")
+check(b02.bagID == nil, "kUI writes nothing the game reads when you use an item")
 check(b02.normalCleared and b02.IconBorder.alpha == 0, "slot art and Blizzard border gone")
 ToggleAllBags()
+check(not bf.shown, "the bags wait until the game's functions have finished calling each other")
+runTimers()
 check(bf.shown, "B opens the bag window")
 local function posOf(b) local p = b.points[#b.points]; return p[4], -p[5] end
 local labels = {}
@@ -713,22 +775,241 @@ fire("BAG_UPDATE", 0); fire("BAG_UPDATE_DELAYED"); runTimers()
 check(bagsWin.buttons[0][7].fuiItem and not bagsWin.buttons[0][2].fuiItem, "moves show up")
 -- close
 ToggleAllBags()
+runTimers()
 check(not bf.shown and not panel.shown, "B closes it (and the settings)")
 OpenAllBags()
+runTimers()
 check(bf.shown, "merchant/mail open the bags")
 CloseAllBags()
+runTimers()
 check(not bf.shown, "and close them")
-ContainerFrame1:Hide(); ContainerFrame1:Show()
-check(not ContainerFrame1.shown, "Blizzard's bag windows stay shut")
+do -- its own block: the main chunk is near Lua's limit of 200 locals
+-- The game's functions stay the game's. Replacing one would make everything the game does
+-- after calling it count as add-on code, and it blocks some of that: its bank opens the bags, then claims a free bag slot.
+gameBags.ran, gameBags.open = {}, false
+for _, name in ipairs({ "OpenAllBags", "CloseAllBags", "ToggleAllBags", "ToggleBackpack", "OpenBackpack", "CloseBackpack", "ToggleBag", "OpenBag" }) do
+  check(hookedGlobals[name], name .. " is followed")
+end
+OpenAllBags(); runTimers()
+check(gameBags.ran.OpenAllBags == 1 and gameBags.ran.OpenBackpack == 1 and gameBags.ran.OpenBag == 4, "the game's own code still runs")
+CloseAllBags(); runTimers()
+local replaced = {}
+for _, file in ipairs({ "Bags", "Core", "Loot", "Tooltips", "Minimap", "Rares", "UnitFrames", "Castbar", "ActionBars", "EditMode", "MinimapIcon", "Style", "Controls" }) do
+  local src = io.open(DIR .. "/" .. file .. ".lua")
+  if src then
+    local text = src:read("a")
+    src:close()
+    for _, name in ipairs({ "OpenAllBags", "CloseAllBags", "ToggleAllBags", "ToggleBackpack", "OpenBackpack", "CloseBackpack", "ToggleBag", "OpenBag", "CloseBag", "IsBagOpen" }) do
+      if text:find("\n%s*" .. name .. "%s*=%s*[^=\"%s]") or text:find("function%s+" .. name .. "%s*%(") then replaced[#replaced + 1] = file .. ":" .. name end
+    end
+  end
+end
+check(#replaced == 0, "nothing in kUI replaces them: " .. table.concat(replaced, ", "))
+-- Each way of pressing B, starting closed and open
+for _, press in ipairs({ ToggleAllBags, ToggleBackpack, function() ToggleBag(2) end }) do
+  gameBags.open = false
+  press(); runTimers()
+  check(bf.shown, "a bag key opens the window")
+  press(); runTimers()
+  check(not bf.shown, "and the same key closes it, whatever the game called along the way")
+end
+-- Closed with x or Esc: the game still thinks the bags are open, and B still opens them.
+gameBags.open = false
+ToggleAllBags(); runTimers()
+bf:Hide()
+check(gameBags.open, "the game hasn't noticed the window closing")
+ToggleAllBags(); runTimers()
+check(bf.shown, "and one press of B opens it again")
+bf:Hide()
+check(not bf.shown, "closed again")
+gameBags.open = false
+OpenBackpack(); runTimers()
+check(bf.shown, "OpenBackpack on its own opens it")
+CloseBackpack(); runTimers()
+check(not bf.shown, "CloseBackpack closes it")
+OpenBag(1); runTimers()
+check(bf.shown, "and OpenBag opens it")
+CloseBag(1); runTimers()
+check(bf.shown, "but closing one bag doesn't close them all")
+CloseAllBags(); runTimers()
+-- Two reports in a row: the last wins
+gameBags.open = false
+OpenBackpack()
+CloseAllBags()
+runTimers()
+check(not bf.shown, "the last call decides")
+-- Bank bags don't toggle ours while the bank is open
+ns.Bags.bankOpen = true
+ToggleBag(9)
+runTimers()
+check(not bf.shown, "a bank bag leaves the bag window alone")
+ns.Bags.bankOpen = false
+-- The game's windows
+local gone = ns.Style.HiddenParent()
+check(ContainerFrame1.parent == gone and ContainerFrameCombinedBags.parent == gone, "the game's bag windows are out of sight")
+check(ContainerFrame1.scripts.OnShow == nil, "with no add-on code run when they open")
+inCombat = true
+ContainerFrame1.parent = UIParent
+ns.Bags:PutAwayGameBags()
+check(ContainerFrame1.parent == UIParent and ns.Bags.putAwayPending, "a /reload in combat waits")
+inCombat = false
+fire("PLAYER_REGEN_ENABLED")
+check(ContainerFrame1.parent == gone and not ns.Bags.putAwayPending, "and finishes when combat ends")
+end
 -- bank
 fire("BANKFRAME_OPENED")
 local bk = KUIBank
-check(bk and bk.shown and bf.shown and not BankFrame.blizzOpened, "bank opens ours (and the bags)")
+check(bk and bk.shown and bf.shown, "bank opens ours (and the bags)")
+check(BankFrame.parent == ns.Style.HiddenParent(), "the game's bank window is out of sight")
 check(bk.free.text == "0/24", "bank slots: " .. bk.free.text)
 bk:Hide()
 check(bankClosed == 1, "closing our bank closes the banker")
 fire("BANKFRAME_CLOSED")
 check(bankClosed == 1, "no double close")
+do -- a bank made of tabs you buy, as WoW Forever has
+  local B = ns.Bags
+  local tabs = { 6, 7 }
+  local next = { tabCost = 10000, canAfford = true }
+  local maxTabs = 4
+  local bankClosedNew = 0
+  canViewWarband = false
+  Enum = Enum or {}
+  Enum.BankType = { Character = 0, Account = 2 }
+  Enum.PlayerInteractionType = { Banker = 8, AccountBanker = 9, Merchant = 5 }
+  C_Bank = {
+    CanViewBank = function(kind) return kind == 0 or canViewWarband end,
+    FetchPurchasedBankTabData = function(kind)
+      local out = {}
+      if kind == 0 then for _, id in ipairs(tabs) do out[#out + 1] = { ID = id } end end
+      if kind == 2 then out[1] = { ID = 12 } end
+      return out
+    end,
+    FetchNumPurchasedBankTabs = function() return #tabs end,
+    FetchMaxNumBankTabs = function() return maxTabs end,
+    FetchNextPurchasableBankTabData = function() return next end,
+    CloseBankFrame = function() bankClosedNew = bankClosedNew + 1 end,
+  }
+  local slotsWere = C_Container.GetContainerNumSlots
+  local infoWere = C_Container.GetContainerItemInfo
+  local sorted
+  C_Container.GetContainerNumSlots = function(bag)
+    if bag == 6 then return 2 elseif bag == 7 then return 1 elseif bag == 12 then return 3 elseif bag > 5 then return 0 end
+    return slotsWere(bag)
+  end
+  C_Container.GetContainerItemInfo = function(bag, slot)
+    if bag == 6 and slot == 1 then
+      return { iconFileID = "tabitem", stackCount = 1, quality = 2, hyperlink = "item:900", itemID = 900 }
+    end
+    if bag >= 6 then return nil end
+    return infoWere(bag, slot)
+  end
+  C_Container.SortBank = function(kind) sorted = kind end
+  local realCreate = CreateFrame
+  CreateFrame = function(kind, name, parent, template, ...)
+    local made = realCreate(kind, name, parent, template, ...)
+    if made then made.madeFrom = template end
+    return made
+  end
+  -- A fresh window, since the one above was made for the older bank.
+  B.windows.bank = nil
+  KUIBank = nil
+  B.bankOpen = false
+  ns.Bags.bankOpenedBags = nil
+  B:Close()
+  fire("PLAYER_INTERACTION_MANAGER_FRAME_SHOW", Enum.PlayerInteractionType.Merchant)
+  check(not (B.windows.bank and B.windows.bank.frame.shown), "another NPC doesn't open the bank")
+  fire("PLAYER_INTERACTION_MANAGER_FRAME_SHOW", Enum.PlayerInteractionType.Banker)
+  local w = B.windows.bank
+  check(w and w.frame.shown and bf.shown and B.bankOpen, "a banker opens it, and the bags")
+  fire("BANKFRAME_OPENED")
+  check(B.bankOpen and bf.shown, "and the game's other signal doesn't open it twice")
+  B:Layout(w)
+  check(w.frame.free.text == "1/3", "your purchased tabs fill it: " .. tostring(w.frame.free.text))
+  check(w.buttons[6] and w.buttons[6][1] and w.buttons[6][2] and w.buttons[7] and w.buttons[7][1], "with a slot for each")
+  check(w.buttons[6][1].parent.id == 6 and w.buttons[6][1].id == 1, "each tab's holder carries its ID")
+  check(w.buttons[6][1].bagID == nil, "and nothing the game reads is written")
+  check(w.buttons[6][1].fuiItem and w.buttons[6][1].fuiItem.icon == "tabitem", "items show")
+  check(not w.buttons[-1], "no old bank bags")
+  check(not w.buttons[12], "no warband tabs you can't see")
+  canViewWarband = true
+  B:Layout(w)
+  check(w.buttons[12] and w.buttons[12][3] and w.frame.free.text == "1/6", "and they join in when you can")
+  canViewWarband = false
+  B:Layout(w)
+  local buy = w.frame.buy
+  check(buy and buy.madeFrom == "BankPanelPurchaseButtonScriptTemplate", "the buy button uses the game's own script")
+  check(buy.attrs.overrideBankType == 0, "for your own bank")
+  check(buy.scripts.OnClick == nil, "and kUI doesn't replace it")
+  check(buy.shown and buy.text.text:find("Buy bank tab", 1, true) and buy.text.text:find("12g 34s 56c", 1, true), "it shows the cost")
+  check(w.frame.info.text == "", "and takes the free count's place")
+  next.canAfford = false
+  fire("PLAYER_MONEY")
+  check(buy.text.color[2] == 0.35, "red when you can't afford it")
+  next.canAfford = true
+  next.tabCost = 0
+  fire("PLAYER_MONEY")
+  check(buy.text.text == "Claim your free bank tab" and buy.text.color[2] == 1, "your first tab is free")
+  next.tabCost = 10000
+  -- Buying one
+  tabs = { 6, 7, 8 }
+  C_Container.GetContainerNumSlots = function(bag)
+    if bag == 6 then return 2 elseif bag == 7 then return 1 elseif bag == 8 then return 4 elseif bag == 12 then return 3 elseif bag > 5 then return 0 end
+    return slotsWere(bag)
+  end
+  fire("BANK_TABS_CHANGED", 0); runTimers()
+  check(w.frame.free.text == "1/7" and w.buttons[8] and w.buttons[8][4], "a new tab appears")
+  maxTabs = 3
+  B:Layout(w)
+  check(not buy.shown and w.frame.info.text:find("6 free", 1, true), "at the most you can have, the button goes")
+  maxTabs = 4
+  w.frame.sort.scripts.OnClick(w.frame.sort)
+  check(sorted == 0, "sort tidies your own tabs")
+  -- Leaving
+  fire("PLAYER_INTERACTION_MANAGER_FRAME_HIDE", Enum.PlayerInteractionType.Merchant)
+  check(w.frame.shown, "another NPC closing doesn't touch it")
+  fire("PLAYER_INTERACTION_MANAGER_FRAME_HIDE", Enum.PlayerInteractionType.Banker)
+  check(not w.frame.shown and not B.bankOpen and not bf.shown, "walking away closes both")
+  check(bankClosedNew == 0, "without closing what's already closed")
+  fire("BANKFRAME_CLOSED")
+  check(not B.bankOpen, "and the other signal is harmless")
+  -- Bags you had open stay open
+  B:Open()
+  fire("BANKFRAME_OPENED")
+  fire("BANKFRAME_CLOSED")
+  check(bf.shown and not w.frame.shown, "bags you opened yourself stay open")
+  B:Close()
+  fire("BANKFRAME_OPENED")
+  w.frame:Hide()
+  check(bankClosedNew == 1, "closing our window ends the visit")
+  fire("BANKFRAME_CLOSED")
+  check(bankClosedNew == 1, "once")
+  -- With no tabs yet, the free one can still be claimed
+  tabs, next.tabCost = {}, 0
+  fire("BANKFRAME_OPENED")
+  B:Layout(w)
+  check(w.frame.shown and buy.shown and buy.text.text == "Claim your free bank tab", "an empty bank offers the free tab")
+  fire("BANKFRAME_CLOSED")
+  -- Off
+  local bankSetting = KUIDB.bank
+  KUIDB.bank = false
+  check(not B:UsesOwnBank(), "/kui bank off gives the bank back to the game")
+  KUIDB.bank = bankSetting
+  check(B:UsesOwnBank(), "and on takes it again")
+  B.ownBank = false
+  fire("BANKFRAME_OPENED")
+  check(not w.frame.shown, "/kui bank off leaves it to the game")
+  BankFrame.parent = UIParent
+  B:PutAwayGameBags()
+  check(BankFrame.parent == UIParent, "and its window stays up")
+  B.ownBank = true
+  B:PutAwayGameBags()
+  B.bankOpen = false
+  fire("BANKFRAME_CLOSED")
+  C_Container.GetContainerNumSlots, C_Container.GetContainerItemInfo, C_Container.SortBank = slotsWere, infoWere, nil
+  C_Bank, Enum.BankType, Enum.PlayerInteractionType = nil, nil, nil
+  CreateFrame = realCreate
+  B:Close()
+end
 
 print("== Rares")
 local Ra = ns.Rares
@@ -1427,6 +1708,31 @@ AURAS.HARMFUL[1] = { icon = "d1", applications = 3, duration = 10, expirationTim
 fire("PLAYER_TARGET_CHANGED")
 fire("UNIT_AURA", "target")
 check(a[1].shown, "back to plain values")
+
+-- The game refusing auras during a fight
+do
+  local allowed = C_UnitAuras.GetAuraDataByIndex
+  local function refuse() error("GetAuraDataByIndex(): Auras cannot be accessed when secret while tainted by 'KUI'") end
+  C_UnitAuras.GetAuraDataByIndex = refuse
+  fire("UNIT_AURA", "target")
+  check(not a[1].shown, "refused auras aren't an error, and nothing old stays up")
+  C_UnitAuras.GetAuraDataByIndex = allowed
+  fire("PLAYER_REGEN_ENABLED")
+  check(a[1].shown, "they come back when combat ends")
+  local asks = 0
+  C_UnitAuras.GetAuraDataByIndex = function(u, i, filter)
+    asks = asks + 1
+    if i == 1 then return allowed(u, i, filter) end
+    refuse()
+  end
+  AURAS.HELPFUL[1] = { icon = "b1", applications = 1, duration = 5, expirationTime = 120, auraInstanceID = 13 }
+  fire("UNIT_AURA", "target")
+  check(a[1].shown and a[1].icon.tex == "d1" and not a[2].shown, "what was allowed before a refusal still shows")
+  check(asks == 2, "and it stops asking once refused")
+  AURAS.HELPFUL[1] = nil
+  C_UnitAuras.GetAuraDataByIndex = allowed
+  fire("UNIT_AURA", "target")
+end
 
 -- Moving
 InCombatLockdown = function() return inCombat end
@@ -2383,7 +2689,8 @@ check(boundKeys.E and boundKeys.E.owner == KUIBar1Button3.kBind and not AB.keysP
 
 -- The look
 check(b.NormalTexture.parent == hidden and b.buttonNormal.parent == hidden and b.SlotArt.parent == hidden and b.Border.parent == hidden and b.HotKey.parent == hidden, "the game's art is gone for good")
-check(b.SpellCastAnimFrame.parent == hidden and b.InterruptDisplay.parent == hidden, "and its cast animations")
+check(b.InterruptDisplay.parent == hidden, "and its interrupt animation")
+check(b.SpellCastAnimFrame.parent == b and b.SpellCastAnimFrame.alpha == 0, "the cast animation stays on the button, where the game's code expects it, but out of sight")
 check(b.icon.maskRemoved == b.IconMask and b.icon.texCoord[1] == 0.07, "square icons, edges cropped")
 check(b.kBack.ctex and b.kEdges[1].shown, "a flat dark slot and a thin border")
 check(b.Name.parent == b.kText and b.Count.parent == b.kText, "text sits above the cooldown swipe")
@@ -3156,7 +3463,8 @@ local bp, ring = MainMenuBarBackpackButton, KeyRingButton
 check(bp.parent == BagBar.tray and CharacterBag3Slot.parent == BagBar.tray and ring.parent == BagBar.tray, "the bag buttons move onto ours")
 check(BagBar.w == 7 * 30 + 6 * 3 and BagBar.h == 30, "seven in a row")
 check(ring.points[1][4] == 0 and CharacterReagentBag0Slot.points[1][4] == 33 and bp.points[1][4] == 33 * 6, "key ring first, backpack last")
-check(bp.art.parent == hidden and bp.IconBorder.parent == hidden and bp.icon.maskRemoved == bp.SquareMask, "the game's art goes, with its mask")
+check(bp.art.alpha == 0 and bp.IconBorder.parent == hidden and bp.icon.maskRemoved == bp.SquareMask, "the game's art goes, with its mask")
+check(bp.art.parent ~= hidden and bp:GetNormalTexture() == bp.art, "but stays on the button, where the game looks for it")
 check(bp.icon.points[1][2] == 1, "the icon sits inside the border")
 check(ring.icon.tex and ring.icon.tex:find("keyring"), "the key ring gets a square icon")
 check(bp.FreeSlots.parent == bp.kText or bp.FreeSlots.points[1][1] == "BOTTOM", "free slots along the bottom")
@@ -3164,6 +3472,14 @@ check(bp.FreeSlots.parent == bp.kText or bp.FreeSlots.points[1][1] == "BOTTOM", 
 local hi = bp:GetHighlightTexture()
 bp:UpdateTextures()
 check(hi.ctex and hi.ctex[4] == 0.16 and bp:GetPushedTexture().ctex[4] == 0.4, "bag art stays flat after the game redraws it")
+check(bp.art.atlas == "game" and bp.art.alpha == 0, "and the game's own redraw of it stays out of sight")
+bp.art.alpha = 1
+bp:UpdateTextures()
+check(bp.art.alpha == 0, "even if something shows it again")
+for _, n in ipairs({ "KeyRingButton", "CharacterReagentBag0Slot", "CharacterBag3Slot", "CharacterBag2Slot", "CharacterBag1Slot", "CharacterBag0Slot" }) do
+  _G[n]:UpdateTextures() -- must not error on any of them
+  check(_G[n].art.alpha == 0, n .. " survives a bag change")
+end
 check(bp.SlotHighlightTexture.ctex[4] == 0.3, "an open bag shows")
 -- ...and lays them out when you pick up an item
 check(unregistered["MainMenuBarManager.OnExpandChanged"] == BagsBar, "picking up an item doesn't lay them out")
@@ -3215,6 +3531,145 @@ MicroMenuContainer.parent = holder
 AB.SetupMenu, AB.oldSetup = AB.oldSetup, nil
 AB.failed = nil
 AB.frames.menu = realFrames
+
+-- The XP and reputation bars
+local XB, RB = KUIXPbar, KUIReputationbar
+local track = StatusTrackingBarManager
+check(XB and RB, "the XP and reputation bars are made")
+check(track.parent == hidden and not next(track.events), "the game's are put away and go quiet")
+check(XB.w == 1192 and XB.h == 12 and XB.points[1][1] == "BOTTOM", "along the bottom by default")
+check(XB.kBar.minv == 0 and XB.kBar.maxv == 1000 and XB.kBar.value == 300, "it shows your XP")
+check(XB.kRest.maxv == 1000 and XB.kRest.value == 500, "with rested XP past its end")
+check(XB.kText.text:find("300 / 1000 (30%)", 1, true) and XB.kText.text:find("Rested 200", 1, true), "and the numbers")
+check(XB.kText.alpha == 0, "which wait for the mouse")
+check(XB.tray.mouseOn == true, "so it can feel it")
+XB.tray.scripts.OnEnter(XB.tray)
+check(XB.kText.alpha == 1, "hovering shows them")
+XB.tray.scripts.OnLeave(XB.tray)
+check(XB.kText.alpha == 0, "and leaving hides them")
+xpNow.value, xpNow.rested = 950, 200
+inCombat = true
+fire("PLAYER_XP_UPDATE")
+check(XB.kBar.value == 950, "it follows your XP, even in combat")
+inCombat = false
+check(XB.kRest.value == 1000, "and rested XP stops at the end of the level")
+xpNow.rested = nil
+fire("UPDATE_EXHAUSTION")
+check(XB.kRest.value == 950 and not XB.kText.text:find("Rested", 1, true), "no rested XP, no rested part")
+xpNow.value, xpNow.top, xpNow.rested = 0, 2000, 10
+fire("PLAYER_LEVEL_UP")
+check(XB.kBar.value == 0 and XB.kBar.maxv == 2000, "a new level starts over")
+AB:Cfg("xp").rested = false
+AB:Changed("xp")
+check(XB.kRest.value == 0, "rested XP can be off")
+AB:Cfg("xp").rested = true
+xpNow.top = 0
+fire("PLAYER_XP_UPDATE")
+check(not XB.tray.shown, "numbers it can't use hide it rather than break it")
+xpNow.top = 1000
+xpNow.show = false
+fire("DISABLE_XP_GAIN")
+check(not XB.tray.shown, "at top level, or with XP off, it steps aside")
+xpNow.show = true
+fire("ENABLE_XP_GAIN")
+check(XB.tray.shown, "and comes back")
+xpNow.value = 77
+fire("PLAYER_ENTERING_WORLD")
+check(XB.kBar.value == 77, "the numbers are read again on login")
+-- Reputation
+check(not RB.tray.shown and RB.points[1][1] == "TOP", "with no faction watched there's no reputation bar")
+watched = { name = "Orgrimmar", factionID = 76, reaction = 5, currentReactionThreshold = 3000, nextReactionThreshold = 9000, currentStanding = 4500 }
+inCombat = true
+fire("UPDATE_FACTION")
+inCombat = false
+check(RB.tray.shown and RB.kBar.minv == 3000 and RB.kBar.maxv == 9000 and RB.kBar.value == 4500, "watching a faction shows it, even in combat")
+check(RB.kText.text:find("Orgrimmar   Friendly   1500 / 6000 (25%)", 1, true), "with its name, standing and progress")
+check(RB.kRest.value == RB.kBar.value, "and no rested part past its end")
+RB.kBar:GetStatusBarTexture().SetVertexColor = function(self, r, g, b) self.vc = { r, g, b } end
+fire("UPDATE_FACTION")
+check(RB.kBar:GetStatusBarTexture().vc[2] == 0.6, "in the colour of your standing")
+watched.nextReactionThreshold = 3000
+fire("UPDATE_FACTION")
+check(RB.kBar.value == 1 and RB.kBar.maxv == 1, "the top of the scale is a full bar")
+check(not RB.kText.text:find("/", 1, true), "with nothing to count")
+watched.factionID = 0
+fire("UPDATE_FACTION")
+check(not RB.tray.shown, "unwatching hides it")
+watched = nil
+fire("UPDATE_FACTION")
+check(not RB.tray.shown, "and so does nothing at all")
+-- Placing them
+ns.FUI:SetUnlocked(true)
+check(RB.tray.shown and RB.kText.text == "Reputation bar" and RB.mover.shown, "an empty bar still shows while you place it")
+check(XB.kText.alpha == 1 and XB.tray.mouseOn == false, "numbers on, and the mouse left for the overlay")
+XB.mover.scripts.OnMouseUp(XB.mover)
+check(E.tab == "extras" and E.extraKey == "xp", "clicking it opens its settings")
+local function srow(key)
+  for _, r in ipairs(E.pages.extras.rows) do
+    if r.def.key == key then return r end
+  end
+end
+check(srow("bar").value.text == "XP bar", "named at the top")
+check(srow("width").alpha == 1 and srow("rested").alpha == 1 and srow("size").alpha == 0.45 and srow("perRow").alpha == 0.45, "the rows that matter are awake")
+srow("width"):Set(800)
+srow("height"):Set(20)
+check(XB.w == 800 and XB.h == 20, "width and height work")
+srow("textSize"):Set(14)
+check(XB.kText.font[2] == 14, "number size too")
+srow("text"):Set("always")
+ns.FUI:SetUnlocked(false)
+check(XB.kText.alpha == 1 and XB.tray.mouseOn == false, "numbers always on, clicks pass through")
+ns.FUI:SetUnlocked(true)
+E:Select("extras")
+srow("text"):Set("off")
+ns.FUI:SetUnlocked(false)
+check(XB.kText.alpha == 0 and XB.tray.mouseOn == false, "or off")
+XB.kHover = true
+AB:UpdateStatus(XB)
+check(XB.kText.alpha == 0, "even over it")
+XB.kHover = nil
+ns.FUI:SetUnlocked(true)
+E:Select("extras")
+srow("border"):Set(false)
+check(not XB.kEdges[1].shown and XB.kBar.points[1][4] == 0, "no border, and the bar fills the space")
+srow("border"):Set(true)
+check(XB.kEdges[1].shown and XB.kBar.points[1][4] == 1, "with a border, it sits inside")
+E.extraKey = "rep"
+E:RefreshPage()
+check(srow("rested").alpha == 0.45 and srow("width").alpha == 1, "reputation has no rested XP")
+E.extraKey = "xp"
+E:RefreshPage()
+srow("on"):Set(false)
+check(not XB.shown, "it can be turned off")
+srow("on"):Set(true)
+check(XB.shown, "and on")
+E.reset.scripts.OnClick(E.reset)
+check(AB:Cfg("xp").width == 1192 and AB:Cfg("xp").text == "hover" and XB.w == 1192, "reset works")
+ns.FUI:SetUnlocked(false)
+-- Same visibility as any bar
+AB:Cfg("xp").mode = "peace"
+AB:Changed("xp")
+check(stateDrivers[XB].visibility:find("[nocombat]show;hide", 1, true), "it can hide in combat")
+AB:ResetBar("xp")
+AB:Cfg("bar1").size = 50
+AB:CopyLook("bar1")
+check(AB:Cfg("xp").size == 36 and AB:Cfg("rep").width == 400, "copy look leaves them alone")
+AB:ResetBar("bar1")
+for _, k in ipairs({ "bar2", "bar3", "stance", "pet", "totem" }) do AB:ResetBar(k) end
+-- If they fail, the game's stays
+local realSetup = AB.SetupStatus
+local xpFrame, repFrame = AB.frames.xp, AB.frames.rep
+AB.frames.xp, AB.frames.rep = nil, nil
+AB.SetupStatus = function() error("boom") end
+AB:ApplyAll()
+check(AB.failed.xp and AB.failed.rep, "a failed XP bar is noted")
+track.parent = UIParent
+AB:HideBlizzard()
+check(track.parent == UIParent, "and the game's stays up")
+AB.SetupStatus = realSetup
+AB.failed = nil
+AB.frames.xp, AB.frames.rep = xpFrame, repFrame
+track.parent = hidden
 
 -- Quick keybinds
 check(KUIBar1Button1.commandName == "ACTIONBUTTON1" and KUIBar2Button3.commandName == "MULTIACTIONBAR1BUTTON3", "the game's mode can see our action buttons")

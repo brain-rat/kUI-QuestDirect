@@ -3,9 +3,10 @@
 -- (level, race, class, earlier quests in the chain), and where to go next once a
 -- zone is done.
 --
--- Three sources, best first:
+-- Sources, best first:
 --   game     Blizzard's own available-quest map data, when the client has it
 --   learned  what you've seen in game: who offered what, where (saved for all characters)
+--   forever  what players saw in Forever, in ForeverData.lua if you made one. Data from ForeverDB.net
 --   classic  the Classic database in QuestData.lua (may differ in Forever)
 
 local _, ns = ...
@@ -63,7 +64,8 @@ function O:Info(id)
   local r = ns.QuestData and ns.QuestData.q[id]
   if not r then self.info[id] = false return nil end
   c = { id = id, title = r[1], level = r[2], min = r[3], races = r[4], classes = r[5], pre = Split(r[6]),
-        excl = r[7], bread = r[8], type = r[9], givers = Split(r[10]), enders = Split(r[11]) }
+        excl = r[7], bread = r[8], type = r[9], givers = Split(r[10]), enders = Split(r[11]),
+        fdb = r[12] ~= nil, seenG = r[12] or 0, seenE = r[13] or 0 }
   self.info[id] = c
   return c
 end
@@ -92,6 +94,53 @@ function O:ByTitle()
   self.titles = t
   return t
 end
+
+-- Lay ForeverData.lua over the Classic data. The file is made on your own PC and
+-- isn't in public releases, so everything here works without it.
+function O:UseForeverData()
+  local F, D = ns.ForeverData, ns.QuestData
+  if not (F and D) or F.applied then return end
+  F.applied = true
+  local function keep(new, old) if new == false or new == nil then return old end return new end
+  for id, f in pairs(F.q) do
+    local r = D.q[id]
+    if r then
+      r[1], r[2], r[3] = keep(f[1], r[1]), keep(f[2], r[2]), keep(f[3], r[3])
+      r[4], r[5], r[6] = keep(f[4], r[4]), keep(f[5], r[5]), keep(f[6], r[6])
+      r[10], r[11] = keep(f[7], r[10]), keep(f[8], r[11])
+    else
+      r = { f[1], f[2] or 0, f[3] or 0, f[4] or 0, f[5] or 0, f[6] or "", 0, 0, 0, f[7] or "", f[8] or "" }
+      D.q[id] = r
+    end
+    r[12], r[13] = f[9] or 0, f[10] or 0
+  end
+  for id, name in pairs(F.n) do
+    if D.n[id] then D.n[id][1] = name else D.n[id] = { name, -1, "" } end
+  end
+  for id in pairs(F.p) do
+    if not D.n[id] then D.n[id] = { "Quest giver", -1, "" } end
+  end
+  self.info, self.groups, self.titles = {}, nil, nil
+end
+
+-- A spot for each place players' maps showed this NPC, with the map the data names.
+function O:PlaceForever(id)
+  local spots = {}
+  for m, x, y in (ns.ForeverData.p[id] or ""):gmatch("(%d+),([%d%.]+),([%d%.]+)") do
+    m, x, y = tonumber(m), tonumber(x) / 100, tonumber(y) / 100
+    local inst, v = Safe(C_Map.GetWorldPosFromMapPos, m, CreateVector2D(x, y))
+    local wx, wy = XY(v)
+    spots[#spots + 1] = { m = m, x = x, y = y, inst = wx and inst or nil, wx = wx, wy = wy }
+  end
+  if #spots > 0 then self.npcPos[id] = spots end
+end
+
+-- The line every place showing ForeverDB's data carries. Nil without the file.
+function O:Credit()
+  return ns.ForeverData and ns.ForeverData.credit or nil
+end
+
+O.LABEL = { [0] = "Classic data", "Seen in WoW Forever", "From the Forever client" }
 
 ------------------------------------------------------------------------
 -- Placing NPCs on zone maps (world -> continent -> zone, via the client)
@@ -160,9 +209,10 @@ function O:Build(onDone)
   self.building = true
   local continents = self:FindContinents()
   local swap = self:DetectAxes(continents)
+  local forever = ns.ForeverData and ns.ForeverData.p or {}
   local queue = {}
   for id, r in pairs(ns.QuestData.n) do
-    if continents[r[2]] then queue[#queue + 1] = id end
+    if continents[r[2]] or forever[id] then queue[#queue + 1] = id end
   end
   table.sort(queue)
   local i = 0
@@ -172,16 +222,20 @@ function O:Build(onDone)
       i = i + 1
       local id = queue[i]
       local r = ns.QuestData.n[id]
-      local spots = {}
-      for _, p in ipairs(Points(r[3])) do
-        local m, x, y = Place(r[2], continents[r[2]], p[1], p[2], swap)
-        if m then
-          local wx, wy = p[1], p[2]
-          if swap then wx, wy = wy, wx end
-          spots[#spots + 1] = { m = m, x = x, y = y, inst = r[2], wx = wx, wy = wy }
+      if forever[id] then
+        self:PlaceForever(id)
+      else
+        local spots = {}
+        for _, p in ipairs(Points(r[3])) do
+          local m, x, y = Place(r[2], continents[r[2]], p[1], p[2], swap)
+          if m then
+            local wx, wy = p[1], p[2]
+            if swap then wx, wy = wy, wx end
+            spots[#spots + 1] = { m = m, x = x, y = y, inst = r[2], wx = wx, wy = wy }
+          end
         end
+        if #spots > 0 then self.npcPos[id] = spots end
       end
-      if #spots > 0 then self.npcPos[id] = spots end
     end
     if i < #queue then
       C_Timer.After(0, step)
@@ -469,6 +523,26 @@ function O:LevelOK(level, minLevel, me)
   return true
 end
 
+-- How a quest's level suits you, best first:
+--   1 right for your level, 2 harder (orange), 3 too easy (grey), 4 far too hard (red)
+-- group: it needs a group, and you aren't in one, so it can't be "right for your level".
+function O:Band(level, me, group)
+  if not level or level <= 0 then return group and not IsInGroup() and 2 or 1 end
+  local diff = level - me.level
+  if diff >= 5 then return 4 end
+  if diff >= 3 then return 2 end
+  if level < me.level - me.green then return 3 end
+  if group and not IsInGroup() then return 2 end
+  return 1
+end
+
+-- The same for a quest in your log. One that's ready to hand in is always worth doing now.
+function O:QuestBand(q, me)
+  if q.complete then return 1 end
+  local info = q.dbid and self:Info(q.dbid)
+  return self:Band(q.level, me, info and info.type == 1)
+end
+
 -- Why you can't take a quest, or nil if you can. assume as for PrereqOK.
 function O:Check(info, me, assume)
   if self:InLog(info.id) then return "in log" end
@@ -527,6 +601,8 @@ function O:ForMap(mapID, assume)
       prev.min = prev.min or o.min
       prev.dbid = prev.dbid or o.dbid
       prev.unlockedBy = prev.unlockedBy or o.unlockedBy
+      prev.fdb = prev.fdb or o.fdb
+      prev.elite = prev.elite or o.elite
       return
     end
     byTitle[k] = o
@@ -544,7 +620,7 @@ function O:ForMap(mapID, assume)
       if l.questID and l.questName and l.x and not l.isHidden and not self:Ignored(l.questID, l.questName) then
         local info = self:InfoForGame(l.questID, l.questName)
         add({ id = l.questID, title = l.questName, level = info and info.level, min = info and info.min,
-              dbid = info and info.id, source = "game",
+              dbid = info and info.id, source = "game", fdb = info and info.fdb, elite = info and info.type == 1,
               giver = { name = NpcName(info and info.givers[1]), m = mapID, x = l.x, y = l.y } })
       end
     end
@@ -568,21 +644,21 @@ function O:ForMap(mapID, assume)
         local by
         if info then _, by = self:PrereqOK(info, assume) end
         add({ id = id, title = g.t, level = g.l or (info and info.level), min = info and info.min, dbid = dbid,
-              unlockedBy = by, source = "learned", giver = { name = g.name or "Quest giver", m = g.m, x = g.x, y = g.y } })
+              unlockedBy = by, source = "learned", fdb = info and info.fdb, elite = info and info.type == 1, giver = { name = g.name or "Quest giver", m = g.m, x = g.x, y = g.y } })
       end
     end
   end
 
-  -- 3. Classic data
-  if QP.db.classicOffers then
-    for _, id in ipairs(self.byMap[mapID] or {}) do
-      local info = self:Info(id)
+  -- 3. What players saw in Forever, then the Classic data (/qd classic off leaves the second out)
+  for _, id in ipairs(self.byMap[mapID] or {}) do
+    local info = self:Info(id)
+    if QP.db.classicOffers or info.seenG > 0 then
       local why, by = self:Check(info, me, assume)
       if not why then
         local spot, npc = self:Spot(info.givers, mapID)
         if spot then
           add({ id = id, title = info.title, level = info.level, min = info.min, dbid = id, unlockedBy = by,
-                elite = info.type == 1, source = "classic",
+                elite = info.type == 1, source = info.seenG > 0 and "forever" or "classic", label = info.seenG, fdb = info.fdb,
                 giver = { name = NpcName(npc), npc = npc, m = mapID, x = spot.x, y = spot.y } })
         end
       end
@@ -592,16 +668,23 @@ function O:ForMap(mapID, assume)
   return out
 end
 
--- Offers on your map, nearest first, with distances.
+-- Offers on your map with distances and how they suit you: best for your level
+-- first, then nearest.
 function O:Nearby()
   local mapID, px, py = QP.Quests:PlayerPos()
   if not mapID then return {} end
+  local me = self:Me()
   local list = {}
   for _, o in ipairs(self:ForMap(mapID)) do
     o.distance = self:Yards(mapID, o.giver.x, o.giver.y, px, py)
+    o.band = self:Band(o.level, me, o.elite)
     list[#list + 1] = o
   end
-  table.sort(list, function(a, b) return a.distance < b.distance end)
+  table.sort(list, function(a, b)
+    if a.band ~= b.band then return a.band < b.band end
+    if abs(a.distance - b.distance) > 1 then return a.distance < b.distance end
+    return a.title < b.title
+  end)
   return list, mapID
 end
 
@@ -619,7 +702,7 @@ function O:Ender(q, mapID)
       if s then spot, npc = s, e break end
     end
   end
-  if spot then return { name = NpcName(npc), m = spot.m, x = spot.x, y = spot.y } end
+  if spot then return { name = NpcName(npc), m = spot.m, x = spot.x, y = spot.y, fdb = info.fdb, label = info.seenE } end
 end
 
 ------------------------------------------------------------------------
@@ -670,7 +753,8 @@ function O:NextHub(force)
         if not self:Check(info, me) then
           for _, g in ipairs(info.givers) do
             local s = self.npcPos[g] and self.npcPos[g][1]
-            if s and s.m == m and s.inst == inst then put(g, s, 1, info.level) break end
+            -- A quest that isn't right for your level counts for less when choosing where to go.
+            if s and s.m == m and s.inst == inst then put(g, s, self:Band(info.level, me, info.type == 1) == 1 and 1 or 0.4, info.level) break end
           end
         end
       end
@@ -711,7 +795,7 @@ function O:NextHub(force)
     local dx, dy = h.spot.wx - wx, h.spot.wy - wy
     h.distance = sqrt(dx * dx + dy * dy)
     local score = h.n / (1 + h.distance / 1500)
-    if h.n >= 2 and (not bestScore or score > bestScore) then best, bestScore = h, score end
+    if (h.n >= 2 or h.quests >= 2) and (not bestScore or score > bestScore) then best, bestScore = h, score end
   end
   local hub
   if best then
@@ -810,6 +894,8 @@ QP:Listen("QUESTS_CHANGED", function() O:Invalidate() end)
 QP:On("PLAYER_LEVEL_UP", function() if QP.db then O:Invalidate(); O.hubCache = nil; QP:EmitSoon("QUESTS_CHANGED", 1) end end)
 QP:On("QUESTLINE_UPDATE", function() if QP.db then O:Invalidate(); QP:EmitSoon("QUESTS_CHANGED", 0.5) end end)
 QP:On("ZONE_CHANGED_NEW_AREA", function() if QP.db then O.hubCache = nil end end)
+
+O:UseForeverData()
 
 QP:Listen("LOGIN", function()
   C_Timer.After(3, function()

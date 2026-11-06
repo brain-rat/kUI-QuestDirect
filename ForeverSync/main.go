@@ -3,7 +3,7 @@
 //
 // Usage: double-click, or
 //
-//	ForeverSync.exe [-key fdb_...] [-only quests,gathering,...] [-zone Durotar] [-refresh] [-out folder]
+//	ForeverSync.exe [-key fdb_...] [-only quests,gathering,...] [-zone Durotar] [-details] [-refresh] [-out folder]
 //
 // It keeps to ForeverDB's limits (60 requests a minute, 10,000 a day) and picks up
 // where it left off if it's stopped or hits the daily limit.
@@ -79,8 +79,7 @@ func (c *client) get(path string, q url.Values) ([]byte, error) {
 		case resp.StatusCode == 404:
 			return nil, nil
 		case resp.StatusCode == 429:
-			if strings.Contains(strings.ToLower(string(body)+resp.Header.Get("X-Daily")), "daily") ||
-				dailyLeft(resp.Header.Get("X-Daily")) == 0 {
+			if isDailyLimit(resp.Header, body) {
 				return nil, errDaily
 			}
 			secs, err := strconv.Atoi(resp.Header.Get("Retry-After"))
@@ -95,6 +94,14 @@ func (c *client) get(path string, q url.Values) ([]byte, error) {
 			return nil, fmt.Errorf("HTTP %d for %s: %s", resp.StatusCode, path, short(body))
 		}
 	}
+}
+
+// isDailyLimit tells a used-up day from the per-minute limit, which only needs a wait.
+func isDailyLimit(h http.Header, body []byte) bool {
+	if strings.TrimSpace(h.Get("X-Daily-Remaining")) == "0" {
+		return true
+	}
+	return strings.Contains(strings.ToLower(string(body)+h.Get("X-Daily")), "daily") || dailyLeft(h.Get("X-Daily")) == 0
 }
 
 // dailyLeft reads "remaining" out of an X-Daily header like "9876/10000" or "remaining=9876"; -1 if unknown.
@@ -263,6 +270,48 @@ func (c *client) details(kind string, ids []string, dir string, refresh bool) (i
 	return len(todo), nil
 }
 
+// listIsComplete says whether every row of the quest list already holds what a
+// quest's own page would give, so downloading each one would add nothing.
+func listIsComplete(rows []json.RawMessage) bool {
+	if len(rows) == 0 {
+		return false
+	}
+	for _, raw := range rows {
+		var m map[string]json.RawMessage
+		if json.Unmarshal(raw, &m) != nil {
+			return false
+		}
+		for _, k := range []string{"starts", "ends", "chain"} {
+			if _, ok := m[k]; !ok {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// quests saves the quest list, and each quest's own page only if the list lacks
+// what's on it or you asked for them. It returns the quests listed and pages fetched.
+func (c *client) quests(q url.Values, out string, forceDetails, refresh bool) (int, int, error) {
+	rows, meta, err := c.list("/quests", q, "quest list")
+	if err != nil {
+		return len(rows), 0, err
+	}
+	if err := writeJSON(filepath.Join(out, "quests_list.json"), map[string]interface{}{"meta": meta, "data": rows}); err != nil {
+		return len(rows), 0, err
+	}
+	if !forceDetails && listIsComplete(rows) {
+		fmt.Println("  The list has everything, so there's no need to download each quest.")
+		return len(rows), 0, nil
+	}
+	ids := make([]string, 0, len(rows))
+	for _, r := range rows {
+		ids = append(ids, idOf(r))
+	}
+	n, err := c.details("quests", ids, filepath.Join(out, "quests"), refresh)
+	return len(rows), n, err
+}
+
 func resolveKey(flagKey, dir string) (string, error) {
 	if flagKey != "" {
 		return strings.TrimSpace(flagKey), nil
@@ -299,7 +348,8 @@ func run() int {
 	keyFlag := flag.String("key", "", "ForeverDB API key (otherwise key.txt or FOREVERDB_KEY)")
 	only := flag.String("only", "", "comma list: meta,zones,changes,quests,gathering,vendors (default: meta,zones,changes,quests)")
 	zone := flag.String("zone", "", "limit quests and gathering to one zone (map ID or name)")
-	refresh := flag.Bool("refresh", false, "download details again even if already saved")
+	detailsFlag := flag.Bool("details", false, "also download each quest's own page (about an hour; the list normally has it all)")
+	refresh := flag.Bool("refresh", false, "with -details, or for vendors: download pages again even if already saved")
 	out := flag.String("out", filepath.Join(home, "data"), "where to save the data")
 	base := flag.String("base", baseURL, "API address (for testing)")
 	flag.Parse()
@@ -410,17 +460,8 @@ func run() int {
 		if *zone != "" {
 			q.Set("zone", *zone)
 		}
-		rows, meta, err := c.list("/quests", q, "quest list")
-		if err != nil {
-			return stop(err)
-		}
-		_ = writeJSON(filepath.Join(*out, "quests_list.json"), map[string]interface{}{"meta": meta, "data": rows})
-		ids := make([]string, 0, len(rows))
-		for _, r := range rows {
-			ids = append(ids, idOf(r))
-		}
-		counts["quests"] = len(ids)
-		n, err := c.details("quests", ids, filepath.Join(*out, "quests"), *refresh)
+		total, n, err := c.quests(q, *out, *detailsFlag, *refresh)
+		counts["quests"] = total
 		counts["quest_details_new"] = n
 		if err != nil {
 			return stop(err)
@@ -450,7 +491,7 @@ func run() int {
 	manifest["requests"] = c.requests
 	_ = writeJSON(filepath.Join(*out, "manifest.json"), manifest)
 	fmt.Printf("\nDone: %d requests. Data is in %s\n", c.requests, *out)
-	fmt.Println("Next: turn this into add-on data files.")
+	fmt.Println("Next: make QuestDirect's data file. Its read-me says how.")
 	pause(interactive)
 	return 0
 }

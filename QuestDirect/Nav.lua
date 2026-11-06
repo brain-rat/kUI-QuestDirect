@@ -148,12 +148,20 @@ function Nav:Toggle(questID)
   if QP.char.focus == questID then self:Clear(true) else self:Focus(questID) end
 end
 
--- The nearest quest you can see in the tracker (objective or turn-in, whichever is closer).
+-- The best next quest you can see in the tracker: one in this zone if there is one,
+-- the best for your level, then the nearest (objective or turn-in, whichever is closer).
 function Nav:Nearest(except)
-  local best, bestD
-  for _, q in ipairs(QP.Quests.list) do
+  local Q, O = QP.Quests, QP.Offers
+  local here = Q:ZoneName(Q:PlayerMap())
+  local me = O:Me()
+  local best, bestZone, bestBand, bestD
+  for _, q in ipairs(Q.list) do
     if q.id ~= except and not QP.char.hidden[q.id] and q.distance then
-      if not bestD or q.distance < bestD then best, bestD = q, q.distance end
+      local away = q.zone == here and 0 or 1
+      local band = O:QuestBand(q, me)
+      if not best or away < bestZone or (away == bestZone and (band < bestBand or (band == bestBand and q.distance < bestD))) then
+        best, bestZone, bestBand, bestD = q, away, band, q.distance
+      end
     end
   end
   return best

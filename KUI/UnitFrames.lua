@@ -415,11 +415,18 @@ function U:UpdateAuras()
   if not self.auraRow then return end
   local shown = 0
   local on = self:Cfg("target").auras
+  local refused
   if on and not self.unlocked and Safe(UnitExists("target")) ~= false and C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
     for _, filter in ipairs({ "HARMFUL", "HELPFUL" }) do
       local i = 1
       while shown < MAX_AURAS do
-        local a = C_UnitAuras.GetAuraDataByIndex("target", i, filter)
+        -- The game can refuse add-ons a unit's auras during a fight. That isn't a fault to
+        -- report: show what was allowed, and try again at the next change or combat's end.
+        local ok, a = pcall(C_UnitAuras.GetAuraDataByIndex, "target", i, filter)
+        if not ok then
+          refused = true
+          break
+        end
         if not a then break end
         shown = shown + 1
         local b = self:AuraButton(shown)
@@ -427,6 +434,7 @@ function U:UpdateAuras()
         self:PaintAura(b, a, i, filter)
         i = i + 1
       end
+      if refused then break end
     end
   end
   for i = shown + 1, #self.auras do
@@ -842,6 +850,7 @@ local function OnEvent(_, event, unit)
   elseif event == "PLAYER_REGEN_ENABLED" then
     if U.totemsPending then U:AnchorTotems() end
     U:UpdateTag(U.frames.player)
+    U:UpdateAuras()
   elseif event == "PLAYER_UPDATE_RESTING" or event == "PLAYER_FLAGS_CHANGED"
     or event == "PARTY_LEADER_CHANGED" or event == "GROUP_ROSTER_UPDATE" then
     U:UpdateTag(U.frames.player)

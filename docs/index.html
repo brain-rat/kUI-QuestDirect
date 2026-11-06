@@ -167,12 +167,12 @@ p { margin: 0; max-width: 65ch; }
         <p>One flat, dark style for the game's own windows, with a shared font setting.</p>
         <ul>
           <li>Player and target frames with matching cast bars.</li>
-          <li>Clean action bars, totems, menu and bag buttons, with size, layout, text and visibility you can set for each one.</li>
+          <li>Clean action bars, totems, menu and bag buttons, and XP and reputation bars, with size, layout, text and visibility you can set for each one.</li>
           <li>Bags and bank with categories, every empty slot at the bottom, adjustable gaps, and a rarity outline and glow on each item.</li>
           <li>Loot window, tooltips, and a square minimap.</li>
           <li>Rare and treasure scanner: alerts, spawn points on the map, and spots you've looted before.</li>
         </ul>
-        <p class="uses"><b>ForeverDB use:</b> what's new or changed in Forever, so the rare scanner and lists can tell Forever-only content from Classic, shown with its <i>Seen in WoW Forever</i> or <i>Classic data</i> label.</p>
+        <p class="uses"><b>ForeverDB use:</b> none. ForeverDB's API has no list of rares, so the scanner uses the open-source Classic data, labelled as such, and what you see in game.</p>
       </div>
       <div class="addon-art" aria-hidden="true">
         <div>
@@ -192,10 +192,10 @@ p { margin: 0; max-width: 65ch; }
     <article class="panel addon">
       <div class="addon-body">
         <div class="addon-head"><h3>ForeverSync</h3><span class="tag">local data tool</span></div>
-        <p>A small Windows program that downloads ForeverDB data onto the player's own PC, where it's turned into data files for the add-ons above. Add-ons can't make web requests, so this is how the data reaches the game.</p>
+        <p>A small Windows program that downloads ForeverDB data onto the player's own PC, where it's turned into a data file for QuestDirect. Add-ons can't make web requests, so this is how the data reaches the game.</p>
         <ul>
           <li>Paced to stay under 60 requests a minute and 10,000 a day.</li>
-          <li>Resumes where it stopped and only fetches what's new on later runs.</li>
+          <li>A normal run takes about a minute.</li>
           <li>The API key stays on the player's PC and is only sent to foreverdb.net.</li>
         </ul>
       </div>
@@ -203,8 +203,8 @@ p { margin: 0; max-width: 65ch; }
         <div class="panel" style="padding:12px;width:100%">
 <div class="term">ForeverSync: WoW Forever data
 Quests
-  quest list: 300 of 4612
-  quests: 50/4612, ~76 min left
+  quest list: 300 of 3922
+  quest list: 3922 of 3922
 <span class="ok">Done. Data from ForeverDB.net</span></div>
         </div>
       </div>
@@ -218,16 +218,14 @@ Quests
         <div class="eyebrow">Endpoints</div>
         <dl>
           <dt>/quests</dt><dd>Givers, turn-ins, positions, chains, levels, side</dd>
-          <dt>/zones</dt><dd>Zone names and map IDs</dd>
-          <dt>/changes-seen</dt><dd>What differs from Classic in Forever</dd>
           <dt>/meta</dt><dd>Game build and totals</dd>
         </dl>
       </div>
       <div>
         <div class="eyebrow">Terms we keep</div>
-        <p>Every place the add-ons show ForeverDB data carries a visible credit linking back, and each record keeps its <i>Seen in WoW Forever</i> or <i>Classic data</i> label.</p>
-        <span class="credit">Data from <a href="https://foreverdb.net" target="_blank" rel="noopener">ForeverDB.net</a> <span>· in tooltips, lists and read-mes</span></span>
-        <p class="muted">Personal, non-commercial use. The data is not resold, not republished as a mirror, and not presented as our own.</p>
+        <p>Every place QuestDirect shows ForeverDB data carries a visible credit with their address, and each record keeps its <i>Seen in WoW Forever</i> or <i>Classic data</i> label.</p>
+        <span class="credit">Data from <a href="https://foreverdb.net" target="_blank" rel="noopener">ForeverDB.net</a> <span>· in the tracker, tooltips and read-mes</span></span>
+        <p class="muted">Personal, non-commercial use. The data is not resold, not republished, and not presented as our own: it stays on each player's PC and isn't in this project's releases.</p>
       </div>
     </div>
   </section>

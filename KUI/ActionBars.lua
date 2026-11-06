@@ -1,7 +1,7 @@
 -- kUI · Action bars
 -- Flat, square action bars in the shared style. Eight bars, plus stance, pet, the
--- Shaman's totem bar, the menu buttons and the bag buttons. Each has its own size,
--- layout and visibility, all changed live from the edit mode.
+-- Shaman's totem bar, the menu buttons, the bag buttons, and XP and reputation bars.
+-- Each has its own size, layout and visibility, all changed live from the edit mode.
 --
 -- The buttons use the game's own ActionBarButtonTemplate, so its secure code keeps
 -- doing the work: clicks, cooldowns, usability, procs and drag and drop. kUI lays
@@ -40,6 +40,8 @@ local DEFS = {
   { key = "totem", label = "Totem bar", kind = "totem" },
   { key = "menu", label = "Menu bar", kind = "menu", extra = true },
   { key = "bags", label = "Bag bar", kind = "bags", extra = true },
+  { key = "xp", label = "XP bar", kind = "status", extra = true },
+  { key = "rep", label = "Reputation bar", kind = "status", extra = true },
 }
 
 local LOOK = {
@@ -48,6 +50,7 @@ local LOOK = {
   keys = true, keySize = 11, macro = false, macroSize = 10, stack = true, stackSize = 12,
   border = true, cdText = true, cdSize = 14,
   mono = true, keyring = true, reagent = true, slots = true,
+  width = 400, height = 12, text = "hover", textSize = 11, rested = true,
 }
 local SIDE = { perRow = 1, growY = "down" }
 local PER_BAR = {
@@ -58,6 +61,8 @@ local PER_BAR = {
   totem = { on = true, perRow = 6, size = 30, gapX = 4, gapY = 4 },
   menu = { on = true, perRow = 14, size = 24, gapX = 2, gapY = 2 },
   bags = { on = true, perRow = 7, size = 30, stackSize = 11 },
+  xp = { on = true, width = 1192 },
+  rep = { on = true },
 }
 -- What "Copy look to all" copies. Not position, or how many buttons a bar has.
 local COPIED = {
@@ -72,6 +77,7 @@ local SPOTS = {
   bar7 = { "RIGHT", "RIGHT", -123, 0 }, bar8 = { "RIGHT", "RIGHT", -162, 0 },
   stance = { "BOTTOM", "BOTTOM", -280, 0 }, pet = { "BOTTOM", "BOTTOM", 0, 0 }, totem = { "BOTTOM", "BOTTOM", 280, 0 },
   menu = { "BOTTOMRIGHT", "BOTTOMRIGHT", -4, 4 }, bags = { "BOTTOMRIGHT", "BOTTOMRIGHT", -4, 32 },
+  xp = { "BOTTOM", "BOTTOM", 0, 3 }, rep = { "TOP", "TOP", 0, -3 },
 }
 
 -- Names for the rows that turn menu buttons on and off.
@@ -162,6 +168,7 @@ local function Exists(def)
     return menu ~= nil and type(menu.GenerateButtonInfos) == "function"
   end
   if def.kind == "bags" then return _G.MainMenuBarBackpackButton ~= nil and not RuleOn("BagsUIDisabled") end
+  if def.kind == "status" then return true end
   if def.kind == "totem" then
     local _, class = UnitClass("player")
     return class == "SHAMAN" and _G.MultiCastActionBarFrame ~= nil
@@ -238,7 +245,7 @@ end
 
 local ART = {
   "NormalTexture", "SlotArt", "SlotBackground", "Border", "IconMask", "HotKey", "FloatingBG",
-  "SpellCastAnimFrame", "InterruptDisplay", "TargetReticleAnimFrame", "CooldownFlash",
+  "InterruptDisplay", "TargetReticleAnimFrame", "CooldownFlash",
 }
 local FIT = { "SpellHighlightTexture", "NewActionTexture", "AutoCastOverlay", "AutoCastable" }
 
@@ -267,6 +274,10 @@ local function Dress(b)
   if b.IconMask and icon and icon.RemoveMaskTexture then icon:RemoveMaskTexture(b.IconMask) end
   Gone(b.GetNormalTexture and b:GetNormalTexture())
   for _, name in ipairs(ART) do Gone(b[name]) end
+  -- This one has to stay on the button: when a cast animation ends, the game goes up
+  -- through its parents to reach the button and calls the button's own functions.
+  local cast = Part(b, "SpellCastAnimFrame")
+  if cast then cast:SetAlpha(0) end
   if icon then icon:SetTexCoord(0.07, 0.93, 0.07, 0.93) end
 
   b.kBack = S.Tex(b, "BACKGROUND", -8)
@@ -613,6 +624,8 @@ function B:Holder(def)
     self:SetupMenu(f)
   elseif def.kind == "bags" then
     self:SetupBags(f)
+  elseif def.kind == "status" then
+    self:SetupStatus(f)
   end
 
   if def.paged then
@@ -897,6 +910,10 @@ end
 -- The game sets all of this again whenever a bag changes.
 local function BagArt(b)
   local icon = b.kIcon
+  -- See-through, not moved away like other art. The game asks the button for this
+  -- texture whenever a bag changes, and once it's moved the button has none to give.
+  local normal = b.GetNormalTexture and b:GetNormalTexture()
+  if type(normal) == "table" and normal.SetAlpha then normal:SetAlpha(0) end
   local high = b.GetHighlightTexture and b:GetHighlightTexture()
   Flat(high, icon, 1, 1, 1, 0.16)
   if high and high.SetBlendMode then
@@ -927,7 +944,6 @@ local function DressBag(b, f)
   b.kIcon = icon
   local mask = Part(b, "SquareMask")
   if mask and icon and icon.RemoveMaskTexture then icon:RemoveMaskTexture(mask) end
-  Gone(b.GetNormalTexture and b:GetNormalTexture())
   Gone(b.IconBorder)
   Gone(b.IconOverlay)
   Gone(b.IconOverlay2)
@@ -970,6 +986,120 @@ function B:SetupBags(f)
     if _G.EventRegistry then _G.EventRegistry:UnregisterCallback("MainMenuBarManager.OnExpandChanged", bar) end
     if bar.Layout then hooksecurefunc(bar, "Layout", function() B:PlaceExtra(f) end) end
   end
+end
+
+------------------------------------------------------------------------
+-- The XP and reputation bars: kUI's own, reading the same numbers as the game's
+------------------------------------------------------------------------
+
+local function Commas(v)
+  return _G.BreakUpLargeNumbers and _G.BreakUpLargeNumbers(v) or tostring(v)
+end
+
+local function Percent(value, low, top)
+  return floor((value - low) / max(top - low, 1) * 100)
+end
+
+-- low, top, value, rested, colour and text, or nothing if there's no XP to show.
+local function XPState()
+  local rules = _G.GameRulesUtil
+  if rules and rules.CanShowExperienceBar then
+    if not rules.CanShowExperienceBar() then return end
+  elseif _G.IsXPUserDisabled and _G.IsXPUserDisabled() then
+    return
+  end
+  local value, top = S.Safe(UnitXP("player")), S.Safe(UnitXPMax("player"))
+  if not (value and top and top > 0) then return end
+  local rested = S.Safe(_G.GetXPExhaustion and _G.GetXPExhaustion()) or 0
+  local text = ("%s / %s (%d%%)"):format(Commas(value), Commas(top), Percent(value, 0, top))
+  local level = S.Safe(UnitLevel("player"))
+  if level then text = ("Level %s   %s"):format(tostring(level), text) end
+  if rested > 0 then text = ("%s   Rested %s"):format(text, Commas(rested)) end
+  return 0, top, value, rested, A, text
+end
+
+local function RepState()
+  local rep = _G.C_Reputation
+  local data = rep and rep.GetWatchedFactionData and rep.GetWatchedFactionData()
+  if not data or data.factionID == 0 or not data.name or data.name == "" then return end
+  local low, top, value = data.currentReactionThreshold, data.nextReactionThreshold, data.currentStanding
+  if not (low and top and value) then return end
+  local colors = _G.FACTION_BAR_COLORS
+  local c = colors and colors[data.reaction]
+  c = c and { c.r, c.g, c.b } or A
+  local standing = _G["FACTION_STANDING_LABEL" .. tostring(data.reaction)]
+  local text = standing and ("%s   %s"):format(data.name, standing) or data.name
+  if top <= low then return 0, 1, 1, 0, c, text end -- the top of the scale: nothing left to fill
+  text = ("%s   %s / %s (%d%%)"):format(text, Commas(value - low), Commas(top - low), Percent(value, low, top))
+  return low, top, value, 0, c, text
+end
+
+-- Nothing here is secure, so it can follow your XP in combat. With nothing to show the
+-- bar steps aside, except while you're placing it.
+function B:UpdateStatus(f)
+  local low, top, value, rested, color, text
+  if f.key == "xp" then
+    low, top, value, rested, color, text = XPState()
+  else
+    low, top, value, rested, color, text = RepState()
+  end
+  local c = f.cfg
+  if not low then
+    if not FUI.unlocked then return f.tray:Hide() end
+    low, top, value, rested, color, text = 0, 1, 0, 0, A, f.def.label
+  end
+  f.tray:Show()
+  f.kBar:SetMinMaxValues(low, top)
+  f.kBar:SetValue(value)
+  S.BarColor(f.kBar, color[1], color[2], color[3])
+  f.kRest:SetMinMaxValues(low, top)
+  f.kRest:SetValue(c.rested and min(value + rested, top) or low)
+  f.kText:SetText(text)
+  local show = c.text == "always" or FUI.unlocked or (c.text == "hover" and f.kHover)
+  f.kText:SetAlpha(show and 1 or 0)
+end
+
+function B:UpdateStatusAll()
+  for _, key in ipairs({ "xp", "rep" }) do
+    if self.frames[key] then self:UpdateStatus(self.frames[key]) end
+  end
+end
+
+function B:LayoutStatus(f)
+  local c = f.cfg
+  f:SetSize(c.width, c.height)
+  local inset = c.border and 1 or 0
+  for _, bar in ipairs({ f.kRest, f.kBar }) do
+    bar:ClearAllPoints()
+    bar:SetPoint("TOPLEFT", f.tray, "TOPLEFT", inset, -inset)
+    bar:SetPoint("BOTTOMRIGHT", f.tray, "BOTTOMRIGHT", -inset, inset)
+  end
+  for i = 1, 4 do f.kEdges[i]:SetShown(c.border) end
+  S.SetFont(f.kText, c.textSize, "OUTLINE")
+  -- Only catches the mouse when hovering does something, so clicks pass through it.
+  f.tray:EnableMouse(c.text == "hover" and not FUI.unlocked)
+  self:UpdateStatus(f)
+end
+
+function B:SetupStatus(f)
+  -- The rested part sits behind the bar and shows past its end. It carries the track too.
+  f.kRest = S.Bar(f.tray)
+  f.kRest:GetStatusBarTexture():SetVertexColor(A[1], A[2], A[3], 0.35)
+  f.kBar = S.Bar(f.tray)
+  f.kBar.bg:Hide()
+  f.kBar:SetFrameLevel(f.kRest:GetFrameLevel() + 1)
+  f.kEdges = S.Edges(f.tray, "BACKGROUND", -6)
+  S.ColorEdges(f.kEdges, S.SOFT[1], S.SOFT[2], S.SOFT[3], 1)
+  f.kText = S.Text(f.kBar, "GameFontHighlightSmall", "CENTER", "OVERLAY", f.cfg.textSize, "OUTLINE")
+  f.kText:SetPoint("CENTER")
+  f.tray:SetScript("OnEnter", function()
+    f.kHover = true
+    B:UpdateStatus(f)
+  end)
+  f.tray:SetScript("OnLeave", function()
+    f.kHover = nil
+    B:UpdateStatus(f)
+  end)
 end
 
 ------------------------------------------------------------------------
@@ -1109,6 +1239,7 @@ end
 function B:Layout(f)
   local c = f.cfg
   if f.def.kind == "totem" then return self:LayoutTotem(f) end
+  if f.def.kind == "status" then return self:LayoutStatus(f) end
   if f.def.extra then return self:LayoutExtra(f) end
   local n = HowMany(f)
   for i = 1, n do
@@ -1346,6 +1477,11 @@ function B:HideBlizzard()
   if Exists(self:Def("bags")) and not (self.failed and self.failed.bags) then
     if _G.BagsBar then _G.BagsBar:SetParent(S.HiddenParent()) end
   end
+  local track = _G.StatusTrackingBarManager
+  if track and not (self.failed and (self.failed.xp or self.failed.rep)) then
+    track:UnregisterAllEvents()
+    track:SetParent(S.HiddenParent())
+  end
 end
 
 -- Priority bindings hand keys 1-6 back to the game while its vehicle bar is up.
@@ -1542,10 +1678,20 @@ local EVENTS = {
   "ACTION_RANGE_CHECK_UPDATE", "PLAYER_EQUIPMENT_CHANGED", "PET_BAR_UPDATE", "UNIT_PET",
   "UPDATE_SHAPESHIFT_FORMS", "UPDATE_SHAPESHIFT_FORM", "UPDATE_SHAPESHIFT_USABLE", "UPDATE_SHAPESHIFT_COOLDOWN",
   "PET_BATTLE_CLOSE",
+  "PLAYER_XP_UPDATE", "UPDATE_EXHAUSTION", "PLAYER_LEVEL_UP", "ENABLE_XP_GAIN", "DISABLE_XP_GAIN",
+  "PLAYER_MAX_LEVEL_UPDATE", "UPDATE_FACTION", "MAJOR_FACTION_RENOWN_LEVEL_CHANGED",
+}
+
+local STATUS_EVENTS = {
+  PLAYER_XP_UPDATE = true, UPDATE_EXHAUSTION = true, PLAYER_LEVEL_UP = true, ENABLE_XP_GAIN = true,
+  DISABLE_XP_GAIN = true, PLAYER_MAX_LEVEL_UPDATE = true, UPDATE_FACTION = true,
+  MAJOR_FACTION_RENOWN_LEVEL_CHANGED = true,
 }
 
 local function OnEvent(_, event, a1, a2, a3)
-  if event == "ACTION_RANGE_CHECK_UPDATE" then
+  if STATUS_EVENTS[event] then
+    B:UpdateStatusAll()
+  elseif event == "ACTION_RANGE_CHECK_UPDATE" then
     B:RangeChanged(a1, a2, a3)
   elseif event == "ACTIONBAR_SLOT_CHANGED" then
     if not a1 or a1 == 0 then
@@ -1606,6 +1752,7 @@ local function OnEvent(_, event, a1, a2, a3)
     B:PaintAll()
     B:BindAll()
     B:UpdateStance()
+    B:UpdateStatusAll()
   end
 end
 

@@ -120,6 +120,7 @@ end
 
 local GROW_X = { { key = "right", name = "Right" }, { key = "left", name = "Left" } }
 local GROW_Y = { { key = "up", name = "Up" }, { key = "down", name = "Down" } }
+local TEXT_MODES = { { key = "always", name = "Always" }, { key = "hover", name = "Hover" }, { key = "off", name = "Off" } }
 local BAR_MODES = {
   { key = "always", name = "Always" }, { key = "hover", name = "Hover" },
   { key = "combat", name = "In combat" }, { key = "peace", name = "No combat" },
@@ -186,11 +187,15 @@ local function BarSections()
   }
 end
 
--- The menu and bag buttons: laid out like a bar, with their own choices of what's on it.
+-- The menu and bag buttons, laid out like a bar with their own choices of what's on it,
+-- and the XP and reputation bars, which are a width and a height.
 local function ExtraSections()
   local function c() return ns.ActionBars:Cfg(E.extraKey) end
   local function isMenu() return E.extraKey == "menu" end
   local function isBags() return E.extraKey == "bags" end
+  local function isXP() return E.extraKey == "xp" end
+  local function isStatus() return E.extraKey == "xp" or E.extraKey == "rep" end
+  local function hasButtons() return not isStatus() end
   local menu = { title = "Menu buttons" }
   for _, item in ipairs(ns.ActionBars:MenuList()) do
     menu[#menu + 1] = { kind = "toggle", label = item.name, key = item.key, store = "menuButton", when = isMenu }
@@ -204,13 +209,13 @@ local function ExtraSections()
     },
     {
       title = "Layout",
-      { kind = "step", label = "Buttons per row", key = "perRow", min = 1, max = 14, step = 1 },
-      { kind = "step", label = "Button size", key = "size", min = 16, max = 64, step = 1 },
-      { kind = "step", label = "Gap across", key = "gapX", min = 0, max = 24, step = 1 },
-      { kind = "step", label = "Gap between rows", key = "gapY", min = 0, max = 24, step = 1 },
+      { kind = "step", label = "Buttons per row", key = "perRow", min = 1, max = 14, step = 1, when = hasButtons },
+      { kind = "step", label = "Button size", key = "size", min = 16, max = 64, step = 1, when = hasButtons },
+      { kind = "step", label = "Gap across", key = "gapX", min = 0, max = 24, step = 1, when = hasButtons },
+      { kind = "step", label = "Gap between rows", key = "gapY", min = 0, max = 24, step = 1, when = hasButtons },
       { kind = "step", label = "Scale", key = "scale", min = 0.5, max = 2, step = 0.05, fmt = "%.2f" },
-      { kind = "cycle", label = "Fill rows to the", key = "growX", list = GROW_X },
-      { kind = "cycle", label = "Add rows going", key = "growY", list = GROW_Y },
+      { kind = "cycle", label = "Fill rows to the", key = "growX", list = GROW_X, when = hasButtons },
+      { kind = "cycle", label = "Add rows going", key = "growY", list = GROW_Y, when = hasButtons },
     },
     {
       title = "When it shows",
@@ -218,6 +223,14 @@ local function ExtraSections()
       { kind = "step", label = "Opacity", key = "alpha", min = 0.1, max = 1, step = 0.05, fmt = "%.2f" },
       { kind = "step", label = "Opacity when faded", key = "fadeTo", min = 0, max = 1, step = 0.05, fmt = "%.2f",
         when = function() return c().mode == "hover" end },
+    },
+    {
+      title = "XP and reputation",
+      { kind = "step", label = "Width", key = "width", min = 60, max = 2000, step = 1, when = isStatus },
+      { kind = "step", label = "Height", key = "height", min = 4, max = 40, step = 1, when = isStatus },
+      { kind = "cycle", label = "Numbers", key = "text", list = TEXT_MODES, when = isStatus },
+      { kind = "step", label = "Number size", key = "textSize", min = 7, max = 24, step = 1, when = isStatus },
+      { kind = "toggle", label = "Rested XP", key = "rested", when = isXP },
     },
     {
       title = "Look",
@@ -245,7 +258,7 @@ local TABS = {
   { key = "pet", label = "Pet", needs = "UnitFrames" },
   { key = "cast", label = "Castbar", needs = "Castbar" },
   { key = "bars", label = "Action bars", needs = "ActionBars" },
-  { key = "extras", label = "Menu & bags", needs = "ActionBars" },
+  { key = "extras", label = "Menu, bags, XP", needs = "ActionBars" },
 }
 
 ------------------------------------------------------------------------
