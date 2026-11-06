@@ -40,6 +40,23 @@ local defaults = {
   findRespawn = 900,    -- seconds a looted spot counts as empty
   rareCooldown = 300,  -- seconds before the same rare alerts again
   rareToastTime = 120, -- seconds an alert stays up
+  -- Unit frames and castbar
+  frames = true,
+  classColor = true, -- starting value for each frame; frameCfg holds the per-frame settings
+  frameScale = 1,
+  frameCfg = nil, -- see UnitFrames.lua
+  playerLeft = nil, playerTop = nil, targetLeft = nil, targetTop = nil,
+  totLeft = nil, totTop = nil, petLeft = nil, petTop = nil,
+  castbar = true,
+  castWidth = 260, castHeight = 22, castSize = 12,
+  castIcon = true, castTime = true, castSpark = true,
+  targetCast = true, -- cast bar on the target frame
+  targetCastH = 18,
+  castScale = 1,
+  castLeft = nil, castTop = nil,
+  editLeft = nil, editTop = nil, -- where the edit mode panel sits
+  icon = true,     -- minimap icon
+  iconAngle = 315, -- where on the map's edge, in degrees
 }
 FUI.defaults = defaults
 
@@ -54,7 +71,9 @@ function FUI:Register(m) table.insert(self.modules, m) end
 local ev = CreateFrame("Frame")
 ev:RegisterEvent("ADDON_LOADED")
 ev:RegisterEvent("PLAYER_LOGIN")
-ev:SetScript("OnEvent", function(_, event, name)
+pcall(ev.RegisterEvent, ev, "ADDON_ACTION_BLOCKED")
+pcall(ev.RegisterEvent, ev, "ADDON_ACTION_FORBIDDEN")
+ev:SetScript("OnEvent", function(_, event, name, call)
   if event == "ADDON_LOADED" and name == ADDON then
     KUIDB = type(KUIDB) == "table" and KUIDB or {}
     for k, v in pairs(defaults) do
@@ -69,12 +88,42 @@ ev:SetScript("OnEvent", function(_, event, name)
         if not ok then FUI:Print("%s couldn't start: %s", m.name, tostring(err)) end
       end
     end
+  elseif event == "ADDON_ACTION_BLOCKED" or event == "ADDON_ACTION_FORBIDDEN" then
+    -- The game's own message doesn't say what was blocked, so kUI names it, once
+    -- per call each session, and keeps a count in its saved settings.
+    if name ~= ADDON or not ns.db then return end
+    local what = tostring(call or "?")
+    local log = ns.db.blockedLog or {}
+    ns.db.blockedLog = log
+    log[what] = (log[what] or 0) + 1
+    FUI.blockedSeen = FUI.blockedSeen or {}
+    if not FUI.blockedSeen[what] then
+      FUI.blockedSeen[what] = true
+      FUI:Print("|cffff7f7fThe game blocked kUI from:|r %s%s. Please report this.", what, InCombatLockdown() and " (in combat)" or "")
+    end
   end
 end)
 
 function FUI:Refresh()
   for _, m in ipairs(self.modules) do
     if m.enabled and m.Refresh then pcall(m.Refresh, m) end
+  end
+end
+
+-- Edit mode: drag overlays on everything that can be moved, and the settings panel.
+function FUI:SetUnlocked(on)
+  if on and InCombatLockdown() then
+    self:Print("The edit mode can't open in combat.")
+    return
+  end
+  local was = self.unlocked
+  self.unlocked = on or nil
+  for _, m in ipairs(self.modules) do
+    if m.enabled and m.SetUnlocked then m:SetUnlocked(on) end
+  end
+  ns.EditMode:SetShown(on)
+  if on and not was then
+    self:Print("Edit mode: drag a frame to move it, click it to change its settings.")
   end
 end
 
@@ -107,6 +156,14 @@ SlashCmdList.KUI = function(msg)
     db.common = not db.common
     FUI:Refresh()
     FUI:Print("white glow on common items: %s", OnOff(db.common))
+  elseif cmd == "edit" then
+    FUI:SetUnlocked(not FUI.unlocked)
+  elseif cmd == "unlock" or cmd == "lock" then
+    FUI:SetUnlocked(cmd == "unlock")
+  elseif cmd == "frames" then
+    ns.UnitFrames:Slash(arg)
+  elseif cmd == "castbar" then
+    ns.Castbar:Slash(arg)
   elseif cmd == "bags" then
     ns.Bags:Slash(arg)
   elseif cmd == "rares" or cmd == "rare" then
@@ -143,6 +200,6 @@ SlashCmdList.KUI = function(msg)
     local parts = {}
     for _, m in ipairs(FUI.modules) do parts[#parts + 1] = m.name .. " " .. OnOff(db[m.key] ~= false) end
     FUI:Print("%s. Opacity %.2f, glow %.2f.", table.concat(parts, ", "), db.alpha, db.glow)
-    FUI:Print("/kui bags · rares · tooltips · loot on|off · map on|off · bags on|off · rares on|off · tooltips on|off · junk on|off · bank on|off · font <name> · alpha 0-1 · glow 0-1 · common · test (sample loot window) · reset")
+    FUI:Print("/kui edit · frames · castbar · icon on|off · bags · rares · tooltips · loot on|off · map on|off · bags on|off · rares on|off · tooltips on|off · junk on|off · bank on|off · font <name> · alpha 0-1 · glow 0-1 · common · test (sample loot window) · reset")
   end
 end

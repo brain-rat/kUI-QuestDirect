@@ -16,6 +16,27 @@ S.HEADER_H = 24
 
 local max, min, floor = math.max, math.min, math.floor
 
+-- Secret values can be handed to widgets (bars, text, textures) but not compared,
+-- added up or formatted in Lua. Safe() gives nil for a secret, so a check just fails.
+function S.IsSecret(v) return issecretvalue ~= nil and issecretvalue(v) == true end
+function S.Safe(v)
+  if S.IsSecret(v) then return nil end
+  return v
+end
+function S.Present(v)
+  if S.IsSecret(v) then return true end -- a secret is always a real value
+  return v ~= nil
+end
+
+-- A hidden parent for Blizzard frames that kUI replaces.
+function S.HiddenParent()
+  if not S.hidden then
+    S.hidden = CreateFrame("Frame")
+    S.hidden:Hide()
+  end
+  return S.hidden
+end
+
 function S.Tex(parent, layer, sub)
   local t = parent:CreateTexture(nil, layer, nil, sub)
   if t.SetSnapToPixelGrid then t:SetSnapToPixelGrid(false) end
@@ -81,7 +102,9 @@ function S.ApplyFonts()
     S.SetFont(fs, v[1], v[2])
     if fs.GetObjectType and fs:GetObjectType() == "FontString" and fs.GetText then
       local t = fs:GetText()
-      if t and t ~= "" then
+      if S.IsSecret(t) then
+        fs:SetText(t) -- a secret can't be compared, only passed back
+      elseif t and t ~= "" then
         fs:SetText(" ")
         fs:SetText(t)
       end
@@ -170,6 +193,53 @@ function S.Button(parent, label, width, onClick, tip)
   return b
 end
 
+-- Flat status bar with a faint track behind it.
+function S.Bar(parent)
+  local b = CreateFrame("StatusBar", nil, parent)
+  b:SetStatusBarTexture(S.WHITE)
+  b:SetMinMaxValues(0, 1)
+  b:SetValue(0)
+  b.bg = S.Tex(b, "BACKGROUND", -8)
+  b.bg:SetAllPoints()
+  b.bg:SetColorTexture(1, 1, 1, 0.07)
+  return b
+end
+
+-- Colours the fill directly, because these numbers can be secret.
+function S.BarColor(bar, r, g, b)
+  bar:GetStatusBarTexture():SetVertexColor(r, g, b)
+end
+
+-- Drag overlay shown while frames are unlocked. onStop(left, top) saves the spot.
+function S.Mover(f, label, onStop)
+  local m = CreateFrame("Frame", nil, f)
+  m:SetAllPoints(f)
+  m:SetFrameLevel(f:GetFrameLevel() + 20)
+  m:EnableMouse(true)
+  m:RegisterForDrag("LeftButton")
+  local fill = S.Tex(m, "OVERLAY", 5)
+  fill:SetAllPoints()
+  fill:SetColorTexture(S.ACCENT[1], S.ACCENT[2], S.ACCENT[3], 0.25)
+  m.fill = fill
+  S.ColorEdges(S.Edges(m, "OVERLAY", 6), S.ACCENT[1], S.ACCENT[2], S.ACCENT[3], 1)
+  m.label = S.Text(m, "GameFontHighlightSmall", "CENTER", "OVERLAY", 12, "OUTLINE")
+  m.label:SetDrawLayer("OVERLAY", 7)
+  m.label:SetPoint("CENTER")
+  m.label:SetText(label)
+  m:SetScript("OnDragStart", function()
+    if InCombatLockdown() then return end
+    f:SetMovable(true)
+    f:StartMoving()
+  end)
+  m:SetScript("OnDragStop", function()
+    f:StopMovingOrSizing()
+    if f.SetUserPlaced then f:SetUserPlaced(false) end
+    onStop(floor(f:GetLeft() + 0.5), floor(f:GetTop() + 0.5))
+  end)
+  m:Hide()
+  return m
+end
+
 ------------------------------------------------------------------------
 -- Rarity outline + inner glow
 ------------------------------------------------------------------------
@@ -214,16 +284,27 @@ function S.GlowSize(g, size)
   w[1]:SetHeight(d); w[2]:SetHeight(d); w[3]:SetWidth(d); w[4]:SetWidth(d)
 end
 
+-- Outline and glow in any colour. a = 0 leaves just the outline.
+function S.GlowRGB(g, r, gg, b, a)
+  S.ColorEdges(g.edges, r, gg, b, 1)
+  Gradient(g.glow[1], "VERTICAL", r, gg, b, 0, a)
+  Gradient(g.glow[2], "VERTICAL", r, gg, b, a, 0)
+  Gradient(g.glow[3], "HORIZONTAL", r, gg, b, a, 0)
+  Gradient(g.glow[4], "HORIZONTAL", r, gg, b, 0, a)
+  for i = 1, 4 do g.glow[i]:SetShown(a > 0) end
+end
+
+function S.GlowOff(g)
+  for i = 1, 4 do
+    g.edges[i]:Hide()
+    g.glow[i]:Hide()
+  end
+end
+
 function S.PaintGlow(g, q)
   local r, gg, b = S.QualityRGB(q)
   if r then
-    S.ColorEdges(g.edges, r, gg, b, 1)
-    local a = ns.db.glow * (q == 0 and 0.6 or 1)
-    Gradient(g.glow[1], "VERTICAL", r, gg, b, 0, a)
-    Gradient(g.glow[2], "VERTICAL", r, gg, b, a, 0)
-    Gradient(g.glow[3], "HORIZONTAL", r, gg, b, a, 0)
-    Gradient(g.glow[4], "HORIZONTAL", r, gg, b, 0, a)
-    for i = 1, 4 do g.glow[i]:SetShown(a > 0) end
+    S.GlowRGB(g, r, gg, b, ns.db.glow * (q == 0 and 0.6 or 1))
   else
     S.ColorEdges(g.edges, S.EDGE[1], S.EDGE[2], S.EDGE[3], 0.5)
     for i = 1, 4 do g.glow[i]:Hide() end

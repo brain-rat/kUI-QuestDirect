@@ -15,7 +15,7 @@ local Meta = { __index = function(t, k)
 end }
 local eventFrames = {}
 local function new(kind, name, parent)
-  local m = setmetatable({ kind = kind, scripts = {}, shown = true, alpha = 1, regions = {}, points = {}, parent = parent, level = 1, events = {} }, Meta)
+  local m = setmetatable({ kind = kind, scripts = {}, shown = true, alpha = 1, regions = {}, points = {}, parent = parent, flevel = 1, events = {} }, Meta)
   if name then _G[name] = m end
   return m
 end
@@ -43,8 +43,8 @@ function Mock:ClearAllPoints() self.points = {} end
 function Mock:GetLeft() return 300 end
 function Mock:GetTop() return 600 end
 function Mock:GetEffectiveScale() return 1 end
-function Mock:GetFrameLevel() return self.level end
-function Mock:SetFrameLevel(l) self.level = l end
+function Mock:GetFrameLevel() return self.flevel end
+function Mock:SetFrameLevel(l) self.flevel = l end
 function Mock:IsObjectType(k) return self.kind == k end
 function Mock:GetRegions() return unpack(self.regions) end
 function Mock:CreateTexture(_, layer) local t = new("Texture", nil, self); t.layer = layer; table.insert(self.regions, t); return t end
@@ -133,6 +133,7 @@ function Mock:SetScale(s) self.scale = s end
 local baseCreate = CreateFrame
 function CreateFrame(kind, name, parent, template)
   local f = baseCreate(kind, name, parent)
+  f.tmpl = template
   if template == "ContainerFrameItemButtonTemplate" then
     f.icon = f:CreateTexture()
     f.Count = f:CreateFontString()
@@ -211,6 +212,82 @@ GoldForever = { db = { drops = {
   n3128 = { name = "Kul Tiras Sailor", loots = 23, it = { ["2589"] = { seen = 6 } } },
   o106318 = { name = "Node: Refreshing Spring Water", loots = 4, it = { ["2589"] = { seen = 2 } } },
 } } }
+-- Unit frames world
+function Mock:SetStatusBarTexture(t) self.sbt = t end
+function Mock:GetStatusBarTexture() self.fill = self.fill or new("Texture", nil, self); return self.fill end
+function Mock:SetMinMaxValues(a, b) self.minv, self.maxv = a, b end
+function Mock:SetValue(v) self.value = v end
+function Mock:SetVertexColor(r, g, b) self.vc = { r, g, b } end
+function Mock:GetThumbTexture() self.thumb = self.thumb or new("Texture", nil, self); return self.thumb end
+function Mock:GetBottom() return 200 end
+function Mock:SetParent(p) self.parent = p end
+function Mock:GetParent() return self.parent end
+function Mock:UnregisterAllEvents() for e in pairs(self.events) do self:UnregisterEvent(e) end; self.allOff = true end
+function Mock:SetCooldown(s, d) self.cooldown = { s, d } end
+function Mock:SetCooldownFromDurationObject(o) self.cooldownObj = o end
+function Mock:SetTimerDuration(d, _, dir) self.timerDur, self.timerDir = d, dir end
+function Mock:SetFormattedText(fmt, ...)
+  for i = 1, select("#", ...) do
+    if issecretvalue and issecretvalue((select(i, ...))) then self.text = "<secret>"; return end
+  end
+  self.text = fmt:format(...)
+end
+local unitWatch = {}
+function RegisterUnitWatch(f) unitWatch[f] = true end
+function UnregisterUnitWatch(f) unitWatch[f] = nil end
+RAID_CLASS_COLORS = { SHAMAN = { r = 0, g = 0.44, b = 0.87 }, ROGUE = { r = 1, g = 0.96, b = 0.41 } }
+DebuffTypeColor = { Magic = { r = 0.2, g = 0.6, b = 1 } }
+Enum.PowerType = { ComboPoints = 14 }
+function GetCreatureDifficultyColor() return { r = 1, g = 1, b = 0 } end
+local UNITS
+local function unitInfo(u) return UNITS and UNITS[u] or {} end
+local castInfo, chanInfo = {}, {}
+local playerClass, combo = "SHAMAN", 0
+local unitApi = {
+  UnitHealth = function(u) return unitInfo(u).hp or 100 end,
+  UnitHealthMax = function(u) return unitInfo(u).hpMax or 100 end,
+  UnitPower = function(u, k) if k == 14 then return combo end; return unitInfo(u).pw or 50 end,
+  UnitPowerMax = function(u, k) if k == 14 then return 5 end; return unitInfo(u).pwMax or 100 end,
+  UnitPowerType = function(u) local i = unitInfo(u); return i.pkind or 0, i.ptoken or "MANA" end,
+  UnitLevel = function(u) return unitInfo(u).level or 7 end,
+  UnitClass = function(u) local i = unitInfo(u); return "Class", i.class or playerClass end,
+  UnitIsPlayer = function(u) return unitInfo(u).isPlayer end,
+  UnitReaction = function(u) return unitInfo(u).reaction end,
+  UnitIsTapDenied = function(u) return unitInfo(u).tapped end,
+  UnitIsConnected = function(u) local c = unitInfo(u).connected; if c == nil then return true end; return c end,
+  UnitIsGhost = function(u) return unitInfo(u).ghost end,
+  UnitClassification = function(u) return unitInfo(u).classif or "normal" end,
+  UnitAffectingCombat = function(u) return unitInfo(u).combat end,
+  UnitIsGroupLeader = function(u) return unitInfo(u).lead end,
+  UnitIsPVP = function(u) return unitInfo(u).pvp end,
+  UnitIsEnemy = function(u) return unitInfo(u).enemy end,
+  UnitIsFriend = function(u) return unitInfo(u).friend end,
+  GetRaidTargetIndex = function(u) return unitInfo(u).raid end,
+  SetRaidTargetIconTexture = function(t, i) t.raidIndex = i end,
+  GetComboPoints = function() return combo end,
+  IsResting = function() return UNITS and UNITS.resting end,
+  UnitCastingInfo = function(u) local c = castInfo[u]; if c then return c.name, c.name, c.icon, c.st, c.en, false, c.guid, c.locked, 1 end end,
+  UnitChannelInfo = function(u) local c = chanInfo[u]; if c then return c.name, c.name, c.icon, c.st, c.en, false, c.locked, 1 end end,
+  BreakUpLargeNumbers = function(v) if issecretvalue and issecretvalue(v) then return v end; return tostring(v) end,
+}
+unitApi.UnitGUID = function(u) return u end
+unitApi.UnitIsVisible = function() return true end
+for k, fn in pairs(unitApi) do if _G[k] == nil then _G[k] = fn end end
+PlayerFrame = new("Frame", "PlayerFrame")
+PlayerFrame:RegisterEvent("UNIT_HEALTH")
+PlayerFrame.healthbar = new("StatusBar"); PlayerFrame.healthbar:RegisterEvent("UNIT_HEALTH")
+TargetFrame = new("Frame", "TargetFrame")
+TargetFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
+PetFrame = new("Frame", "PetFrame")
+TargetFrameToT = new("Frame", "TargetFrameToT")
+TargetFrameSpellBar = new("StatusBar", "TargetFrameSpellBar")
+ComboFrame = new("Frame", "ComboFrame")
+TotemFrame = new("Frame", "TotemFrame")
+PlayerCastingBarFrame = new("StatusBar", "PlayerCastingBarFrame")
+PlayerCastingBarFrame:RegisterEvent("UNIT_SPELLCAST_START")
+function PlayerCastingBarFrame:SetUnit(u) self.barUnit = u or "none" end
+for _, b in ipairs({ PlayerFrame, TargetFrame, PetFrame, TargetFrameToT }) do unitWatch[b] = true end
+
 -- load
 local ns = {}
 for line in io.lines(DIR .. "/KUI.toc") do
@@ -785,7 +862,1144 @@ check(KUIDB.common, "common toggle")
 SlashCmdList.KUI("map off")
 check(KUIDB.map == false and chat[#chat]:find("reload"), "modules switch off (after reload)")
 SlashCmdList.KUI("")
-check(chat[#chat]:find("/kui bags"), "help")
+check(chat[#chat]:find("/kui edit") and chat[#chat]:find("bags"), "help")
+
+print("== Unit frames")
+for k, fn in pairs(unitApi) do _G[k] = fn end
+UNITS = {
+  player = { hp = 269, hpMax = 269, pw = 171, pwMax = 171, level = 7, isPlayer = true, class = "SHAMAN", reaction = 5 },
+  target = { hp = 40, hpMax = 80, pw = 10, pwMax = 20, ptoken = "RAGE", level = 9, reaction = 2, classif = "elite", enemy = true },
+  targettarget = { hp = 269, hpMax = 269 },
+  pet = { hp = 30, hpMax = 60, pw = 5, pwMax = 10 },
+}
+function UnitExists(u) return UNITS[u] ~= nil end
+function UnitIsDead(u) return unitInfo(u).dead end
+function UnitName(u) return unitInfo(u).name or u end
+UNITS.player.name, UNITS.target.name = "Test Hero", "Razormane Scout"
+local now = 100
+GetTime = function() return now end
+local U, CB, St = ns.UnitFrames, ns.Castbar, ns.Style
+local P, T, ToT, Pet = KUIPlayerFrame, KUITargetFrame, KUIToTFrame, KUIPetFrame
+local started = true
+for _, m in ipairs(chat) do if m:find("couldn't start") then started = false end end
+check(started, "every module starts")
+check(KUIDB.frames and KUIDB.castbar and KUIDB.targetCast and KUIDB.frameScale == 1, "defaults on")
+
+-- Blizzard's frames
+local hidden = St.HiddenParent()
+for _, b in ipairs({ PlayerFrame, TargetFrame, PetFrame, TargetFrameToT, TargetFrameSpellBar, ComboFrame }) do
+  check(b.parent == hidden and b.shown == false and b.allOff, "Blizzard frame hidden and silent")
+end
+check(PlayerFrame.healthbar.allOff, "its bars stop listening too")
+for _, b in ipairs({ PlayerFrame, TargetFrame, PetFrame, TargetFrameToT }) do check(not unitWatch[b], "Blizzard frame off unit watch") end
+check(TotemFrame.parent == UIParent and TotemFrame.shown ~= false, "totem frame moved out, still showing")
+check(TotemFrame.points[1][2] == P, "totems sit on the kUI player frame")
+TotemFrame:SetPoint("TOPLEFT", PlayerFrame, "BOTTOMLEFT", 0, 0)
+check(#TotemFrame.points == 1 and TotemFrame.points[1][2] == P, "and stay there when Blizzard re-anchors them")
+check(PlayerCastingBarFrame.parent == hidden and PlayerCastingBarFrame.barUnit == "none" and PlayerCastingBarFrame.allOff, "Blizzard's cast bar gone")
+
+-- Secure setup
+for _, fr in ipairs({ P, T, ToT, Pet }) do
+  check(fr.tmpl == "SecureUnitButtonTemplate" and fr.attrs.type1 == "target" and fr.attrs.type2 == "togglemenu", "click targets, right-click menu")
+  check(ClickCastFrames[fr], "click-cast add-ons can see it")
+end
+check(P.attrs.unit == "player" and T.attrs.unit == "target" and ToT.attrs.unit == "targettarget" and Pet.attrs.unit == "pet", "right units")
+check(unitWatch[T] and unitWatch[ToT] and unitWatch[Pet] and not unitWatch[P], "only the player frame stays up without a unit")
+check(P.fuiPanel.fill.ctex[1] == 0.04 and P.fuiPanel.edges[1].ctex[1] == 0.35, "shared panel colours")
+check(P.h == 18 + 20 + 1 + 12 + 1 and ToT.h == 16 + 10 + 1 and Pet.h == 16 + 10 + 1 + 5 + 1, "heights fit the bars")
+
+-- Player
+fire("PLAYER_ENTERING_WORLD")
+check(P.name.text == "Test Hero" and P.name.color[1] == 0.5, "player name in the accent colour")
+check(P.hp.minv == 0 and P.hp.maxv == 269 and P.hp.value == 269, "health bar")
+check(P.hpText.text == "269 / 269" and P.hpPct.text == "100%", "health text: " .. tostring(P.hpText.text))
+check(P.pwText.text == "171 / 171" and P.pw.value == 171, "power text")
+check(P.level.text == 7, "level")
+local vc = P.hp:GetStatusBarTexture().vc
+check(vc[1] == 0 and vc[2] == 0.44, "class colour on your health")
+SlashCmdList.KUI("frames class")
+vc = P.hp:GetStatusBarTexture().vc
+check(not KUIDB.classColor and vc[1] == 0.3 and vc[2] == 0.7, "class colours can be turned off")
+SlashCmdList.KUI("frames class")
+UNITS.player.hp = 100
+fire("UNIT_HEALTH", "nameplate1")
+check(P.hp.value == 269, "other units' events don't touch it")
+fire("UNIT_HEALTH", "player")
+check(P.hp.value == 100 and P.hpText.text == "100 / 269" and P.hpPct.text == "37%", "health updates: " .. tostring(P.hpPct.text))
+UNITS.player.pw = 20
+fire("UNIT_POWER_FREQUENT", "player")
+check(P.pwText.text == "20 / 171", "power updates")
+UNITS.player.combat = true
+fire("PLAYER_REGEN_ENABLED")
+check(P.tag.text:find("Combat"), "combat tag")
+UNITS.player.combat, UNITS.resting = nil, true
+fire("PLAYER_UPDATE_RESTING")
+check(P.tag.text:find("Rested") and not P.tag.text:find("Combat"), "rested tag")
+UNITS.resting, UNITS.player.lead, UNITS.player.pvp = nil, true, true
+fire("PARTY_LEADER_CHANGED")
+check(P.tag.text:find("Lead") and P.tag.text:find("PvP"), "leader and PvP tags")
+UNITS.player.lead, UNITS.player.pvp = nil, nil
+UNITS.player.dead = true
+fire("UNIT_HEALTH", "player")
+check(P.hpText.text == "Dead" and P.hpPct.text == "", "dead")
+UNITS.player.dead, UNITS.player.ghost = nil, true
+fire("UNIT_HEALTH", "player")
+check(P.hpText.text == "Ghost", "ghost")
+UNITS.player.ghost = nil
+
+-- Target
+local fsounds = {}
+PlaySound = function(id) fsounds[#fsounds + 1] = id end
+SOUNDKIT = { INTERFACE_SOUND_LOST_TARGET_UNIT = "lost", IG_CREATURE_AGGRO_SELECT = "aggro", IG_CHARACTER_NPC_SELECT = "npc", IG_CREATURE_NEUTRAL_SELECT = "neutral" }
+fsounds = {}
+fire("PLAYER_TARGET_CHANGED")
+check(T.name.text == "Razormane Scout", "target name")
+check(T.tag.text:find("Elite"), "elite tag")
+check(T.level.text == 9 and T.level.color[2] == 1, "level in its difficulty colour")
+vc = T.hp:GetStatusBarTexture().vc
+check(vc[1] == 0.8 and T.name.color[1] == 0.8, "hostile: red")
+check(T.hpText.text == "40 / 80" and T.hpPct.text == "50%", "target health")
+check(T.pw:GetStatusBarTexture().vc[1] == 0.85, "rage colour")
+check(fsounds[1] == "aggro", "hostile target sound")
+UNITS.target.reaction = 4
+fire("UNIT_FACTION", "target")
+check(T.hp:GetStatusBarTexture().vc[1] == 0.9 and T.name.color[1] == 0.9, "neutral: yellow")
+UNITS.target.reaction, UNITS.target.tapped = 2, true
+fire("UNIT_FACTION", "target")
+check(T.hp:GetStatusBarTexture().vc[1] == 0.5, "tapped by someone else: grey")
+UNITS.target.tapped, UNITS.target.level = nil, -1
+fire("PLAYER_TARGET_CHANGED")
+check(T.level.text == "??", "skull level")
+UNITS.target.level, UNITS.target.pwMax = 9, 0
+fire("UNIT_MAXPOWER", "target")
+check(T.pwText.text == "", "no power, no numbers")
+UNITS.target.pwMax, UNITS.target.isPlayer, UNITS.target.connected = 20, true, false
+UNITS.target.class = "ROGUE"
+fire("PLAYER_TARGET_CHANGED")
+check(T.hpText.text == "Offline" and T.hp:GetStatusBarTexture().vc[1] == 1, "offline player, class coloured")
+UNITS.target.isPlayer, UNITS.target.connected, UNITS.target.class = nil, nil, nil
+UNITS.target.raid = 8
+fire("RAID_TARGET_UPDATE")
+check(T.raid.shown and T.raid.raidIndex == 8, "raid icon")
+UNITS.target.raid = nil
+fire("RAID_TARGET_UPDATE")
+check(not T.raid.shown, "raid icon cleared")
+local keep = UNITS.target
+UNITS.target = nil
+fsounds = {}
+fire("PLAYER_TARGET_CHANGED")
+check(fsounds[1] == "lost", "lost-target sound")
+UNITS.target = keep
+
+-- Small frames
+ToT.name.text = ""
+ToT.scripts.OnUpdate(ToT, 0.1)
+check(ToT.name.text == "", "target of target checks now and then, not every frame")
+ToT.scripts.OnUpdate(ToT, 0.2)
+check(ToT.name.text == "targettarget" and ToT.hp.value == 269, "target of target updates")
+check(ToT.hpText.shown == false and ToT.pw.shown == false and ToT.level.shown == false, "target of target: name and health only")
+fire("UNIT_PET", "player")
+check(Pet.name.text == "pet" and Pet.hp.value == 30 and Pet.pw.value == 5 and Pet.hpText.shown == false, "pet frame")
+
+-- Auras
+local AURAS = { HARMFUL = {}, HELPFUL = {} }
+local tipAura
+function GameTooltip:SetUnitAuraByAuraInstanceID(u, id) tipAura = id end
+C_UnitAuras = { GetAuraDataByIndex = function(_, i, filter) return AURAS[filter][i] end }
+AURAS.HARMFUL[1] = { icon = "d1", applications = 3, duration = 10, expirationTime = 150, dispelName = "Magic", auraInstanceID = 11 }
+AURAS.HARMFUL[2] = { icon = "d2", applications = 0, duration = 0, expirationTime = 0, isFromPlayerOrPlayerPet = true, auraInstanceID = 12 }
+AURAS.HELPFUL[1] = { icon = "b1", applications = 1, duration = 5, expirationTime = 120, auraInstanceID = 13 }
+fire("UNIT_AURA", "player")
+check(#U.auras == 0, "other units' auras ignored")
+fire("UNIT_AURA", "target")
+local a = U.auras
+check(#a == 3 and a[1].icon.tex == "d1" and a[3].icon.tex == "b1", "debuffs first, then buffs")
+check(a[1].count.text == 3 and a[2].count.text == "", "stacks only above one")
+check(a[1].cd.cooldown[1] == 140 and a[1].cd.cooldown[2] == 10 and a[2].cd.shown == false, "cooldown spiral only with a duration")
+check(a[1].edges[1].ctex[1] == 0.2, "dispel type colours the border")
+check(a[2].edges[1].ctex[1] == 0.5, "yours in the accent colour")
+a[1].scripts.OnEnter(a[1])
+check(tipAura == 11, "aura tooltip")
+check(a[1].points[1][4] == 0 and a[2].points[1][4] == 25, "icons in a row")
+for i = 3, 20 do AURAS.HARMFUL[i] = { icon = "x", applications = 0, duration = 0, expirationTime = 0, auraInstanceID = 100 + i } end
+fire("UNIT_AURA", "target")
+check(#a == 16 and a[10].points[1][5] == 25 and a[10].points[1][4] == 0, "stops at 16, next row goes up")
+for i = 3, 20 do AURAS.HARMFUL[i] = nil end
+AURAS.HARMFUL[2] = nil
+fire("UNIT_AURA", "target")
+check(a[1].shown and a[2].icon.tex == "b1" and a[3].shown == false and a[16].shown == false, "gone auras hide")
+AURAS.HARMFUL[1] = nil
+
+-- Castbar
+local Bar, TBar = KUICastbar, KUITargetCastbar
+check(Bar.shown == false and TBar.shown == false, "cast bars hidden until something casts")
+check(TBar.parent == T, "target bar belongs to the target frame")
+check(U.auraRow.points[1][2] == T, "auras above the target frame")
+castInfo.player = { name = "Lightning Bolt", icon = "bolt", st = 100000, en = 102000, guid = "g1" }
+fire("UNIT_SPELLCAST_START", "player", "g1")
+check(Bar.shown and Bar.label.text == "Lightning Bolt" and Bar.icon.tex == "bolt", "cast shows")
+check(Bar.bar.maxv == 2 and Bar.bar:GetStatusBarTexture().vc[1] == 0.5, "accent colour, runs for the cast time")
+now = 101
+Bar.scripts.OnUpdate(Bar, 1)
+check(Bar.bar.value == 1 and Bar.time.text == "1.0", "fills as it goes")
+fire("UNIT_SPELLCAST_FAILED", "player", "g2")
+check(Bar.mode == "cast", "another spell failing doesn't end this cast")
+fire("UNIT_SPELLCAST_STOP", "player", "g2")
+check(Bar.mode == "cast", "another cast's stop doesn't end this one")
+castInfo.player.en = 103000
+fire("UNIT_SPELLCAST_DELAYED", "player", "g1")
+check(Bar.bar.maxv == 3, "pushback extends it")
+castInfo.player = nil
+fire("UNIT_SPELLCAST_STOP", "player", "g1")
+check(Bar.mode == "fade" and Bar.bar.value == 1 and Bar.time.text == "", "finished cast fills up and fades")
+Bar.scripts.OnUpdate(Bar, 0.1)
+check(Bar.alpha < 1 and Bar.shown, "fading")
+Bar.scripts.OnUpdate(Bar, 1)
+check(Bar.shown == false and Bar.mode == nil and Bar.alpha == 1, "then gone")
+castInfo.player = { name = "Heal", icon = "h", st = 101000, en = 103000, guid = "g3" }
+fire("UNIT_SPELLCAST_START", "player", "g3")
+castInfo.player = nil
+fire("UNIT_SPELLCAST_INTERRUPTED", "player", "g3")
+check(Bar.label.text == "Interrupted" and Bar.bar:GetStatusBarTexture().vc[1] == 0.85, "interrupted: red")
+fire("UNIT_SPELLCAST_STOP", "player", "g3")
+check(Bar.label.text == "Interrupted", "the stop after an interrupt doesn't hide the message")
+Bar.scripts.OnUpdate(Bar, 0.3)
+check(Bar.alpha == 1, "message holds")
+Bar.scripts.OnUpdate(Bar, 1)
+check(Bar.shown == false, "then fades")
+castInfo.player = { name = "Heal", icon = "h", st = 101000, en = 103000, guid = "g4" }
+fire("UNIT_SPELLCAST_START", "player", "g4")
+castInfo.player = nil
+fire("UNIT_SPELLCAST_FAILED", "player", "g4")
+check(Bar.label.text == "Failed", "failed")
+Bar.scripts.OnUpdate(Bar, 2)
+chanInfo.player = { name = "Drain", icon = "c", st = 101000, en = 105000 }
+fire("UNIT_SPELLCAST_CHANNEL_START", "player")
+check(Bar.mode == "channel" and Bar.bar:GetStatusBarTexture().vc[1] == 0.45 and Bar.bar.value == 4, "channel: green, starts full")
+now = 102
+Bar.scripts.OnUpdate(Bar, 1)
+check(Bar.bar.value == 3, "channel empties")
+fire("UNIT_SPELLCAST_FAILED", "player", "zz")
+check(Bar.mode == "channel", "a failed spell doesn't end a channel")
+chanInfo.player = nil
+fire("UNIT_SPELLCAST_CHANNEL_STOP", "player")
+check(Bar.mode == "fade", "channel ends")
+Bar.scripts.OnUpdate(Bar, 2)
+-- target cast
+castInfo.target = { name = "Shadow Bolt", icon = "s", st = 102000, en = 104000, guid = "t1", locked = true }
+fire("UNIT_SPELLCAST_START", "target", "t1")
+check(TBar.shown and Bar.shown == false, "target's cast only on the target's bar")
+check(TBar.bar:GetStatusBarTexture().vc[1] == 0.55, "can't be interrupted: grey")
+check(U.auraRow.points[1][2] == TBar, "auras move up above the cast bar")
+castInfo.target = nil
+fire("PLAYER_TARGET_CHANGED")
+check(TBar.shown == false and U.auraRow.points[1][2] == T, "new target: bar gone, auras back down")
+castInfo.target = { name = "Shadow Bolt", icon = "s", st = 102000, en = 104000, guid = "t2" }
+fire("PLAYER_TARGET_CHANGED")
+check(TBar.shown and TBar.label.text == "Shadow Bolt", "targeting something mid-cast shows it")
+castInfo.target = nil
+fire("PLAYER_TARGET_CHANGED")
+-- a lost stop event can't leave the bar stuck
+castInfo.player = { name = "Heal", icon = "h", st = 101000, en = 102500, guid = "g9" }
+fire("UNIT_SPELLCAST_START", "player", "g9")
+castInfo.player = nil
+now = 104
+Bar.scripts.OnUpdate(Bar, 0.1)
+check(Bar.mode == "fade", "a lost stop event can't leave the bar stuck")
+Bar.scripts.OnUpdate(Bar, 2)
+-- sample
+SlashCmdList.KUI("castbar test")
+check(Bar.shown and TBar.shown and Bar.label.text == "Sample cast", "/kui castbar test")
+now = now + 3.5
+Bar.scripts.OnUpdate(Bar, 0.1)
+check(Bar.mode == "fade", "sample ends by itself")
+Bar.scripts.OnUpdate(Bar, 2)
+TBar.scripts.OnUpdate(TBar, 0.1)
+TBar.scripts.OnUpdate(TBar, 2)
+check(Bar.shown == false and TBar.shown == false, "sample gone")
+
+-- Combo points
+check(rawget(U, "pips") == nil, "no combo pips on a Shaman")
+playerClass = "ROGUE"
+UNITS.player.class = "ROGUE"
+combo = 3
+U:BuildPips()
+U:UpdatePips()
+check(#U.pips.pips == 5 and U.pips.pips[3].value == 3 and U.pips.pips[3].minv == 2 and U.pips.pips[3].maxv == 3, "five pips, filled by the count")
+check(U.pips.shown, "Rogue: always there")
+combo = 4
+fire("UNIT_POWER_UPDATE", "player")
+check(U.pips.pips[1].value == 4, "pips update")
+U.pips.druid, combo = true, 0
+U:UpdatePips()
+check(U.pips.shown == false, "Druid: only with points")
+combo = 1
+U:UpdatePips()
+check(U.pips.shown, "Druid: shows with points")
+combo = 0
+playerClass, UNITS.player.class = "SHAMAN", "SHAMAN"
+U.pips = nil
+
+-- Secret values: bars and text take them untouched, and Lua never does sums on them.
+local SecretMeta = {}
+local function boom() error("a secret value was used in Lua", 2) end
+for _, m in ipairs({ "__add", "__sub", "__mul", "__div", "__mod", "__idiv", "__unm", "__concat", "__len", "__lt", "__le", "__tostring", "__call", "__index", "__newindex" }) do SecretMeta[m] = boom end
+local function Secret() return setmetatable({}, SecretMeta) end
+issecretvalue = function(v) return getmetatable(v) == SecretMeta end
+local sHp, sMax, sPw = Secret(), Secret(), Secret()
+UnitHealth, UnitHealthMax = function() return sHp end, function() return sMax end
+UnitPower, UnitPowerMax = function() return sPw end, function() return sPw end
+UnitPowerType = function() return Secret(), Secret() end
+UnitName, UnitLevel = function() return Secret() end, function() return Secret() end
+UnitClass = function() return Secret(), Secret() end
+for _, k in ipairs({ "UnitIsPlayer", "UnitReaction", "UnitIsTapDenied", "UnitIsConnected", "UnitIsDead", "UnitIsGhost", "UnitClassification", "UnitAffectingCombat", "UnitIsGroupLeader", "UnitIsPVP", "GetRaidTargetIndex", "UnitIsEnemy", "UnitIsFriend", "GetComboPoints" }) do
+  _G[k] = function() return Secret() end
+end
+UnitExists = function() return Secret() end
+CurveConstants = { ScaleTo100 = "to100" }
+local pctAsked
+UnitHealthPercent = function(_, _, curve) pctAsked = curve; return Secret() end
+C_StringUtil = { RoundToNearestString = function(v) return v end }
+local ok, err = pcall(function()
+  fire("PLAYER_ENTERING_WORLD")
+  fire("UNIT_HEALTH", "target")
+  fire("UNIT_POWER_UPDATE", "target")
+  fire("PLAYER_TARGET_CHANGED")
+  fire("UNIT_FACTION", "target")
+  fire("PLAYER_FLAGS_CHANGED")
+  fire("RAID_TARGET_UPDATE")
+  ToT.scripts.OnUpdate(ToT, 1)
+end)
+check(ok, "secret unit values: no errors: " .. tostring(err))
+check(T.hp.value == sHp and T.hp.maxv == sMax, "secret health goes straight into the bar")
+check(T.hpText.text == "<secret>" and T.hpPct.text == "<secret>" and pctAsked == "to100", "secret health text comes from the game")
+check(T.pw.value == sPw and T.pwText.text == "<secret>", "secret power")
+check(T.level.text == "", "secret level just isn't shown")
+check(issecretvalue(T.name.text), "secret name still shows")
+ok, err = pcall(function() SlashCmdList.KUI("font rajdhani"); SlashCmdList.KUI("font barlow") end)
+check(ok, "changing font with a secret name on screen: " .. tostring(err))
+-- secret auras
+local durObj = {}
+C_UnitAuras = {
+  GetAuraDataByIndex = function(_, i, f) if i == 1 and f == "HARMFUL" then return { icon = Secret(), applications = Secret(), duration = Secret(), expirationTime = Secret(), dispelName = Secret(), isFromPlayerOrPlayerPet = Secret(), auraInstanceID = 77 } end end,
+  GetAuraApplicationDisplayCount = function(_, id, lo, hi) return "x" .. id end,
+  GetAuraDuration = function() return durObj end,
+}
+ok, err = pcall(function() fire("UNIT_AURA", "target") end)
+check(ok, "secret auras: no errors: " .. tostring(err))
+check(a[1].count.text == "x77" and a[1].cd.cooldownObj == durObj and a[1].cd.shown, "secret aura: count and spiral from the game")
+-- secret cast
+local cObj = { GetRemainingDuration = function() return Secret() end }
+local sLocked = Secret()
+UnitCastingDuration = function() return cObj end
+Enum.StatusBarTimerDirection = { ElapsedTime = 0, RemainingTime = 1 }
+C_CurveUtil = { EvaluateColorValueFromBoolean = function(flag, a1, b1) if flag == sLocked then return a1 end; return b1 end }
+castInfo.target = { name = Secret(), icon = Secret(), st = Secret(), en = Secret(), guid = Secret(), locked = sLocked }
+ok, err = pcall(function()
+  fire("UNIT_SPELLCAST_START", "target", Secret())
+  TBar.scripts.OnUpdate(TBar, 0.1)
+end)
+check(ok, "secret cast: no errors: " .. tostring(err))
+check(TBar.shown and TBar.bar.timerDur == cObj and TBar.bar.timerDir == 0 and TBar.time.text == "<secret>", "secret cast: the game's duration drives the bar")
+check(TBar.bar:GetStatusBarTexture().vc[1] == 0.55, "secret can't-interrupt still colours it")
+ok, err = pcall(function() fire("UNIT_SPELLCAST_STOP", "target", Secret()) end)
+check(ok and TBar.mode == "fade", "secret cast ends: " .. tostring(err))
+TBar.scripts.OnUpdate(TBar, 2)
+castInfo.target = nil
+issecretvalue = nil
+for k, fn in pairs(unitApi) do _G[k] = fn end
+function UnitExists(u) return UNITS[u] ~= nil end
+function UnitIsDead(u) return unitInfo(u).dead end
+function UnitName(u) return unitInfo(u).name or u end
+C_UnitAuras = { GetAuraDataByIndex = function(_, i, filter) return AURAS[filter][i] end }
+AURAS.HARMFUL[1] = { icon = "d1", applications = 3, duration = 10, expirationTime = 150, auraInstanceID = 11 }
+fire("PLAYER_TARGET_CHANGED")
+fire("UNIT_AURA", "target")
+check(a[1].shown, "back to plain values")
+
+-- Moving
+InCombatLockdown = function() return inCombat end
+inCombat = true
+SlashCmdList.KUI("unlock")
+check(not U.unlocked and chat[#chat]:find("combat"), "can't unlock in combat")
+inCombat = false
+SlashCmdList.KUI("unlock")
+check(U.unlocked and P.mover.shown and T.mover.shown and Bar.mover.shown and Bar.shown, "/kui unlock shows the drag overlays")
+check(not unitWatch[T] and not unitWatch[ToT] and not unitWatch[Pet] and T.shown and T.unit == "player" and T.name.text == "Test Hero", "target frame stays up to place it, showing you")
+check(a[1].shown == false, "no auras while placing")
+P.mover.scripts.OnDragStart(P.mover)
+P.mover.scripts.OnDragStop(P.mover)
+check(KUIDB.playerLeft == 300 and KUIDB.playerTop == 600, "dragging saves the spot")
+Bar.mover.scripts.OnDragStop(Bar.mover)
+check(KUIDB.castLeft == 300 and KUIDB.castTop == 600, "castbar spot saved")
+SlashCmdList.KUI("lock")
+check(not U.unlocked and P.mover.shown == false and Bar.mover.shown == false and Bar.shown == false, "/kui lock")
+check(unitWatch[T] and unitWatch[ToT] and unitWatch[Pet] and T.unit == "target", "frames follow their units again")
+local watchCalls = 0
+local rw = RegisterUnitWatch
+RegisterUnitWatch = function(f) watchCalls = watchCalls + 1; rw(f) end
+inCombat = true
+SlashCmdList.KUI("lock")
+check(watchCalls == 0, "/kui lock in combat when already locked touches nothing protected")
+inCombat = false
+SlashCmdList.KUI("frames unlock")
+check(U.unlocked, "/kui frames unlock too")
+fire("PLAYER_REGEN_DISABLED")
+check(not U.unlocked and P.mover.shown == false and Bar.mover.shown == false and watchCalls == 3, "entering combat locks them")
+RegisterUnitWatch = rw
+U:Place(); CB:Place()
+check(P.points[1][1] == "TOPLEFT" and P.points[1][4] == 300, "saved spot used")
+check(Bar.points[1][1] == "TOPLEFT" and Bar.points[1][4] == 300, "saved castbar spot used")
+SlashCmdList.KUI("frames scale 1.2")
+check(KUIDB.frameScale == 1.2 and T.scale == 1.2 and ToT.scale == 1.2, "scale")
+inCombat = true
+SlashCmdList.KUI("frames scale 0.9")
+check(KUIDB.frameScale == 1.2 and chat[#chat]:find("combat"), "no scaling in combat")
+inCombat = false
+SlashCmdList.KUI("frames reset")
+check(not KUIDB.playerLeft and KUIDB.frameScale == 1 and P.points[1][1] == "CENTER", "frames reset")
+SlashCmdList.KUI("castbar scale 1.5")
+check(KUIDB.castScale == 1.5 and Bar.scale == 1.5, "castbar scale")
+SlashCmdList.KUI("castbar reset")
+check(not KUIDB.castLeft and KUIDB.castScale == 1 and Bar.points[1][1] == "CENTER", "castbar reset")
+SlashCmdList.KUI("castbar target")
+check(KUIDB.targetCast == false and TBar.off, "target cast bar switch")
+SlashCmdList.KUI("castbar target")
+SlashCmdList.KUI("alpha 0.6")
+check(math.abs(P.fuiPanel.fill.ctex[4] - 0.6) < 1e-9 and math.abs(Bar.fuiPanel.fill.ctex[4] - 0.6) < 1e-9 and math.abs(TBar.fuiPanel.fill.ctex[4] - 0.6) < 1e-9, "opacity reaches the frames and bars")
+SlashCmdList.KUI("frames off")
+check(KUIDB.frames == false and chat[#chat]:find("reload"), "/kui frames off")
+SlashCmdList.KUI("frames on")
+SlashCmdList.KUI("castbar off")
+check(KUIDB.castbar == false, "/kui castbar off")
+SlashCmdList.KUI("castbar on")
+SlashCmdList.KUI("frames")
+check(chat[#chat]:find("/kui edit"), "frames help")
+SlashCmdList.KUI("castbar")
+check(chat[#chat]:find("/kui castbar test"), "castbar help")
+
+print("== Edit mode")
+UnitGUID = function(u) return unitInfo(u).guid or u end
+UnitIsVisible = function() return true end
+local portraitCalls = {}
+SetPortraitTexture = function(t, u) portraitCalls[#portraitCalls + 1] = { t, u } end
+inCombat = false
+
+-- Names come in two parts on this client
+local realName = UnitName
+RegionalUniqueNamesEnabled = function() return true end
+Constants = { CharacterNameSeparatorConsts = { CHARACTERNAME_SURNAME_SEPARATOR = " " } }
+UnitName = function(u) if u == "player" then return "Test", "Hero" end; return realName(u) end
+U:Update(P)
+check(P.name.text == "Test Hero", "both parts of a player's name: " .. tostring(P.name.text))
+UnitName = function(u) if u == "player" then return "Test", "" end; return realName(u) end
+U:Update(P)
+check(P.name.text == "Test", "no empty second part")
+UnitName = function(u) if u == "player" then return "Test", "Hero" end; return realName(u) end
+RegionalUniqueNamesEnabled = nil
+U:Update(P)
+check(P.name.text == "Test", "a second value only counts where the client uses two-part names")
+RegionalUniqueNamesEnabled = function() return true end
+
+-- Opening
+SlashCmdList.KUI("edit")
+local Panel = KUIEditMode
+local E = ns.EditMode
+check(Panel and Panel.shown and U.unlocked and P.mover.shown and ToT.mover.shown and Pet.mover.shown and Bar.mover.shown, "/kui edit opens the panel and overlays")
+check(#E.tabs == 5 and E.tab == "player", "a tab for each frame")
+check(UISpecialFrames[#UISpecialFrames] == "KUIEditMode", "Esc closes it")
+local function row(key)
+  for _, r in ipairs(E.rows) do if r.shown ~= false and r.def and r.def.key == key then return r end end
+  error("no row " .. key)
+end
+local function plus(key, n) for _ = 1, n or 1 do row(key):Step(1) end end
+local function minus(key, n) for _ = 1, n or 1 do row(key):Step(-1) end end
+
+-- Clicking a frame picks its tab
+T.mover.scripts.OnMouseUp(T.mover)
+check(E.tab == "target" and row("auras") and row("elite"), "clicking a frame opens its settings")
+check(math.abs(T.mover.fill.ctex[4] - 0.45) < 1e-9 and math.abs(P.mover.fill.ctex[4] - 0.2) < 1e-9, "the chosen frame stands out")
+Bar.mover.scripts.OnMouseUp(Bar.mover)
+check(E.tab == "cast" and row("castWidth"), "castbar overlay opens its tab")
+E:Select("player")
+local hasAuras = false
+for _, r in ipairs(E.rows) do if r.shown ~= false and r.def.key == "auras" then hasAuras = true end end
+check(not hasAuras, "only the target has aura settings")
+
+-- Sizes
+local w0 = P.w
+plus("width", 2)
+check(P.w == w0 + 10 and U:Cfg("player").width == w0 + 10 and T.w == 230, "width changes this frame only")
+check(row("width").value.text == tostring(w0 + 10), "the panel shows the new value")
+minus("width", 2)
+plus("hpHeight", 5)
+check(P.hp.h == 25 and P.h == 18 + 25 + 1 + 12 + 1, "health bar height")
+minus("hpHeight", 5)
+for _ = 1, 60 do minus("hpHeight") end
+check(P.hp.h == 4, "stops at the minimum")
+U:Cfg("player").hpHeight = 20
+U:Layout(P)
+plus("pwHeight", 2)
+check(P.pw.h == 14, "power bar height")
+minus("pwHeight", 2)
+minus("power")
+check(P.pw.shown == false and P.h == 18 + 20 + 1, "power bar off, frame shrinks")
+plus("power")
+check(P.pw.shown and P.h == 18 + 20 + 1 + 12 + 1, "and back")
+
+-- Fonts
+plus("nameSize", 3)
+check(P.name.font[2] == 16 and P.level.font[2] == 15 and P.h == 21 + 20 + 1 + 12 + 1, "name font size, header grows to fit")
+minus("nameSize", 3)
+plus("barSize", 2)
+check(P.hpText.font[2] == 14 and P.hpPct.font[2] == 14, "health font size")
+minus("barSize", 2)
+plus("pwSize")
+check(P.pwText.font[2] == 11, "power font size")
+minus("pwSize")
+
+-- What shows
+plus("name")
+check(U:Cfg("player").name == "first" and P.name.text == "Test" and P.name.shown, "first name only")
+plus("name")
+check(U:Cfg("player").name == "off" and P.name.shown == false, "no name")
+minus("level")
+check(P.level.shown == false, "no level")
+check(P.tag.points[1][2] == P, "tags move over when the level goes")
+minus("tags")
+check(P.tag.shown == false and P.strip.shown == false and P.h == 1 + 20 + 1 + 12 + 1 and P.hp.points[1][5] == -1, "nothing in the header: the strip goes too")
+plus("tags"); plus("level"); plus("name")
+check(U:Cfg("player").name == "full" and P.name.text == "Test Hero" and P.strip.shown and P.h == 18 + 20 + 1 + 12 + 1, "and back")
+minus("hpText")
+check(P.hpText.shown == false, "no health numbers")
+UNITS.player.dead = true
+fire("UNIT_HEALTH", "player")
+check(P.hpText.shown and P.hpText.text == "Dead", "Dead still shows with numbers off")
+UNITS.player.dead = nil
+fire("UNIT_HEALTH", "player")
+check(P.hpText.shown == false, "and goes again")
+plus("hpText")
+minus("hpPct")
+check(P.hpPct.shown == false, "no health percent")
+plus("hpPct")
+minus("pwText")
+check(P.pwText.shown == false, "no power numbers")
+plus("pwText")
+
+-- Class colours per frame
+minus("classColor")
+check(P.hp:GetStatusBarTexture().vc[2] == 0.7 and U:Cfg("target").classColor, "class colours off for this frame only")
+plus("classColor")
+check(P.hp:GetStatusBarTexture().vc[2] == 0.44, "and on")
+
+-- Portraits
+portraitCalls = {}
+plus("portrait")
+check(U:Cfg("player").portrait == "2d" and P.portrait2d.shown, "flat portrait")
+check(portraitCalls[1] and portraitCalls[1][1] == P.portrait2d and portraitCalls[1][2] == "player", "painted from the unit")
+local size = P.h - 2
+check(P.portrait2d.w == size and P.portrait2d.h == size, "square, the frame's height")
+check(P.hp.points[1][4] == size + 2 and P.hp.points[2][4] == -1, "bars move over")
+plus("portraitSide")
+check(P.hp.points[1][4] == 1 and P.hp.points[2][4] == -(size + 2) and P.portrait2d.points[1][1] == "TOPRIGHT", "other side")
+minus("portraitSide")
+plus("portrait")
+check(U:Cfg("player").portrait == "3d" and P.portrait3d and P.portrait3d.shown and P.portrait2d.shown == false, "3D portrait")
+check(P.portrait3d.modelUnit == "player" and P.portrait3d.points[1][1] == "TOPLEFT", "model of the unit")
+P.portrait3d.modelUnit = nil
+U:Update(P, true)
+check(P.portrait3d.modelUnit == nil, "the model isn't reloaded when nothing changed")
+U:Update(P)
+check(P.portrait3d.modelUnit == "player", "a real update does reload it")
+P.portrait3d.modelUnit = nil
+fire("UNIT_MODEL_CHANGED", "player")
+check(P.portrait3d.modelUnit == "player", "new model when the game says so")
+plus("portrait")
+check(U:Cfg("player").portrait == "off" and P.portrait3d.shown == false and P.hp.points[1][4] == 1, "portrait off, bars back")
+
+-- Target of target: its own settings, including a light update every so often
+E:Select("tot")
+plus("portrait")
+check(ToT.portrait2d.shown and U:Cfg("player").portrait == "off", "each frame has its own portrait setting")
+portraitCalls = {}
+ToT.scripts.OnUpdate(ToT, 1)
+check(#portraitCalls == 0, "target of target doesn't repaint an unchanged portrait")
+minus("portrait")
+plus("level")
+check(ToT.level.shown and ToT.level.text ~= nil, "small frames can show their level too")
+minus("level")
+plus("hpPct")
+check(ToT.hpPct.shown and ToT.hpPct.text:find("%%"), "and numbers")
+minus("hpPct")
+
+-- Elite and rare
+E:Select("target")
+local edge, glow = T.eliteGlow.edges[1], T.eliteGlow.glow[1]
+check(edge.shown == false and glow.shown == false, "nothing while previewing as normal")
+plus("previewClass")
+check(row("previewClass").current == "Elite" and edge.shown and edge.ctex[1] == 1 and edge.ctex[2] == 0.82 and glow.shown and T.tag.text:find("Elite"), "preview: gold border, glow and tag")
+plus("previewClass")
+check(row("previewClass").current == "Rare" and edge.ctex[3] == 1 and T.tag.text:find("Rare"), "preview: rare")
+plus("previewClass", 2)
+check(row("previewClass").current == "Boss" and edge.ctex[1] == 1 and edge.ctex[2] == 0.33, "preview: boss")
+minus("elite")
+check(U:Cfg("target").elite == "border" and edge.shown and glow.shown == false, "border only")
+minus("elite")
+check(U:Cfg("target").elite == "off" and edge.shown == false and T.tag.text:find("Boss"), "style off, the tag has its own switch")
+plus("elite", 2)
+check(U:Cfg("target").elite == "glow", "back to border and glow")
+check(T.over.flevel > T.flevel, "drawn above the bars")
+
+-- Auras and the target's cast bar
+plus("auraSize", 3)
+check(U:Cfg("target").auraSize == 25, "aura size")
+check(TBar.shown and TBar.preview, "the target's cast bar shows to set it up")
+plus("targetCastH", 2)
+check(TBar.h == 20 and KUIDB.targetCastH == 20, "target cast bar height")
+minus("targetCastH", 2)
+minus("targetCast")
+check(KUIDB.targetCast == false and TBar.shown == false and TBar.off, "target cast bar off, straight away")
+castInfo.target = { name = "Shadow Bolt", icon = "s", st = 102000, en = 104000, guid = "t5" }
+fire("UNIT_SPELLCAST_START", "target", "t5")
+check(TBar.shown == false, "and it stays off")
+castInfo.target = nil
+plus("targetCast")
+check(KUIDB.targetCast and TBar.shown, "and on again")
+
+-- Castbar tab
+E:Select("cast")
+plus("castWidth", 2)
+check(Bar.w == 270 and KUIDB.castWidth == 270, "castbar width")
+minus("castWidth", 2)
+plus("castHeight", 4)
+check(Bar.h == 26 and Bar.icon.w == 24, "castbar height, icon keeps up")
+minus("castHeight", 4)
+plus("castSize", 2)
+check(Bar.label.font[2] == 14 and Bar.time.font[2] == 14, "castbar font size")
+minus("castSize", 2)
+minus("castIcon")
+check(Bar.icon.shown == false and Bar.bar.points[1][2] == Bar, "no icon: the bar takes its place")
+check(TBar.icon.shown == false, "both bars follow")
+plus("castIcon")
+check(Bar.icon.shown and Bar.bar.points[1][2] == Bar.icon, "icon back")
+minus("castTime")
+check(Bar.time.shown == false and Bar.label.points[2][2] == Bar.bar, "no time: the name gets the room")
+plus("castTime")
+minus("castSpark")
+check(Bar.spark.shown == false, "no spark")
+plus("castSpark")
+plus("castScale", 2)
+check(math.abs(Bar.scale - 1.1) < 1e-9, "castbar scale")
+Bar.mover.scripts.OnDragStop(Bar.mover)
+E.reset.scripts.OnClick()
+check(KUIDB.castWidth == 260 and KUIDB.castScale == 1 and not KUIDB.castLeft and Bar.points[1][1] == "CENTER", "reset the castbar")
+
+-- Everything-wide settings
+plus("font")
+check(KUIDB.font ~= "barlow" and P.name.font[1]:find("Barlow"), "font from the panel")
+minus("font")
+check(KUIDB.font == "barlow", "and back")
+minus("alpha")
+check(math.abs(KUIDB.alpha - 0.55) < 1e-9 and math.abs(P.fuiPanel.fill.ctex[4] - 0.55) < 1e-9, "opacity from the panel")
+plus("alpha")
+
+-- Reset a frame
+E:Select("target")
+plus("width", 3)
+minus("level")
+T.mover.scripts.OnDragStop(T.mover)
+check(KUIDB.targetLeft == 300, "target spot saved")
+minus("targetCast")
+E.reset.scripts.OnClick()
+check(U:Cfg("target").width == 230 and U:Cfg("target").level and T.w == 230 and T.level.shown, "reset this frame")
+check(not KUIDB.targetLeft and T.points[1][1] == "CENTER", "spot too")
+check(KUIDB.targetCast and not TBar.off, "and its cast bar")
+
+-- Target-of-target and pet can move too
+ToT.mover.scripts.OnDragStop(ToT.mover)
+check(KUIDB.totLeft == 300, "target of target spot saved")
+U:Place()
+check(ToT.points[1][1] == "TOPLEFT" and ToT.points[1][2] == UIParent, "and used")
+E:Select("tot")
+E.reset.scripts.OnClick()
+check(ToT.points[1][2] == T and Pet.points[1][2] == P, "by default they sit beside their frames")
+
+-- The panel doesn't change anything in combat
+E:Select("player")
+local widthNow = U:Cfg("player").width
+inCombat = true
+plus("width")
+E.reset.scripts.OnClick()
+check(U:Cfg("player").width == widthNow, "nothing changes in combat")
+inCombat = false
+
+-- Closing
+T.mover.scripts.OnMouseUp(T.mover)
+plus("previewClass")
+E.done.scripts.OnClick()
+check(not Panel.shown and not U.unlocked and P.mover.shown == false and Bar.mover.shown == false, "Done closes it")
+check(T.unit == "target" and unitWatch[T] and U.previewClass == nil, "frames back to real units, preview gone")
+check(TBar.shown == false and not TBar.preview, "target cast bar back to casts only")
+U:Update(T)
+check(T.eliteGlow.edges[1].ctex and T.tag.text:find("Elite"), "the real target's elite tag again")
+check(T.eliteGlow.edges[1].shown and T.eliteGlow.edges[1].ctex[2] == 0.82, "a real elite gets the gold border")
+UNITS.target.classif = "normal"
+fire("UNIT_CLASSIFICATION_CHANGED", "target")
+check(T.eliteGlow.edges[1].shown == false, "a normal mob doesn't")
+UNITS.target.classif = "elite"
+SlashCmdList.KUI("edit")
+check(Panel.shown, "/kui edit reopens")
+SlashCmdList.KUI("edit")
+check(not Panel.shown and not U.unlocked, "and closes")
+SlashCmdList.KUI("unlock")
+check(Panel.shown, "/kui unlock is the same thing")
+Panel:Hide() -- Esc
+check(not U.unlocked and P.mover.shown == false, "Esc leaves the edit mode")
+SlashCmdList.KUI("edit")
+fire("PLAYER_REGEN_DISABLED")
+check(not Panel.shown and not U.unlocked, "combat closes it")
+inCombat = true
+SlashCmdList.KUI("edit")
+check(not Panel.shown and chat[#chat]:find("combat"), "can't open in combat")
+inCombat = false
+
+-- Panel position
+SlashCmdList.KUI("edit")
+SlashCmdList.KUI("edit")
+KUIDB.editLeft, KUIDB.editTop = 111, 222
+SlashCmdList.KUI("edit")
+check(Panel.points[1][4] == 111 and Panel.points[1][5] == 222, "the panel remembers its spot")
+SlashCmdList.KUI("edit")
+
+-- Settings from before the edit mode carry over
+KUIDB.frameCfg = nil
+KUIDB.classColor, KUIDB.frameScale = false, 1.3
+check(U:Cfg("player").classColor == false and U:Cfg("target").scale == 1.3, "older settings carry over")
+KUIDB.classColor, KUIDB.frameScale = true, 1
+KUIDB.frameCfg = nil
+U:Update(P)
+check(U:Cfg("player").width == 230 and U:Cfg("player").portrait == "off", "new settings get defaults")
+-- A frame whose saved settings are missing a newer option still works
+KUIDB.frameCfg = { player = { width = 300 } }
+check(U:Cfg("player").width == 300 and U:Cfg("player").nameSize == 13, "missing options filled in, saved ones kept")
+KUIDB.frameCfg = nil
+U:LayoutAll()
+UnitName = realName
+
+;(function() -- a function of its own: Lua allows 200 locals per function
+print("== Settings controls")
+SlashCmdList.KUI("edit")
+local E2 = ns.EditMode
+E2:Select("player")
+local function rowOf(key)
+  for _, r in ipairs(E2.rows) do if r.def.key == key then return r end end
+  error("no row " .. key)
+end
+-- slider
+local wr = rowOf("width")
+check(wr.slider.minv == 80 and wr.slider.maxv == 500 and wr.slider.value == 230, "slider shows the setting and its range")
+wr.slider.scripts.OnValueChanged(wr.slider, 262)
+check(U:Cfg("player").width == 260 and P.w == 260 and wr.value.text == "260", "dragging a slider snaps to its step and applies")
+wr.slider.scripts.OnMouseWheel(wr.slider, 1)
+check(U:Cfg("player").width == 265, "wheel up steps it")
+wr.slider.scripts.OnMouseWheel(wr.slider, -1)
+wr.slider.scripts.OnValueChanged(wr.slider, 9999)
+check(U:Cfg("player").width == 500, "limited to its range")
+wr.slider.scripts.OnValueChanged(wr.slider, 230)
+wr.filling = true
+wr.slider.scripts.OnValueChanged(wr.slider, 300)
+wr.filling = false
+check(U:Cfg("player").width == 230, "the panel filling itself in doesn't count as a change")
+local sr = rowOf("scale")
+sr.slider.scripts.OnValueChanged(sr.slider, 1.2)
+check(math.abs(P.scale - 1.2) < 1e-9 and sr.value.text == "1.20", "scale shows two decimals")
+sr.slider.scripts.OnValueChanged(sr.slider, 1)
+-- switch
+local lr = rowOf("level")
+check(lr.switch.track.ctex[1] == 0.5 and lr.switch.knob.points[1][1] == "RIGHT", "a switch that's on: accent, knob right")
+lr.switch.scripts.OnClick(lr.switch)
+check(U:Cfg("player").level == false and P.level.shown == false, "clicking the switch")
+check(lr.switch.track.ctex[1] == 1 and lr.switch.knob.points[1][1] == "LEFT", "off: grey, knob left")
+lr.switch.scripts.OnClick(lr.switch)
+-- segments
+local nr = rowOf("name")
+check(#nr.segments == 3 and nr.segments[1].text.text == "Full", "choices side by side")
+check(nr.segments[1].bg.ctex[1] == 0.5 and nr.segments[2].bg.ctex[1] == 1, "the chosen one is lit")
+nr.segments[2].scripts.OnClick(nr.segments[2])
+check(U:Cfg("player").name == "first" and nr.current == "First" and nr.segments[2].bg.ctex[1] == 0.5, "clicking a choice")
+nr.segments[1].scripts.OnClick(nr.segments[1])
+-- stepper for long lists
+local fr = rowOf("font")
+check(rawget(fr, "segments") == nil and fr.value.text == "Barlow", "long lists step instead")
+fr.plus.scripts.OnClick(fr.plus)
+check(KUIDB.font ~= "barlow" and fr.value.text ~= "Barlow", "next font")
+fr.minus.scripts.OnClick(fr.minus)
+check(KUIDB.font == "barlow", "previous font")
+-- rows that have no effect dim
+local pr, phr = rowOf("power"), rowOf("pwHeight")
+check(phr.alpha == 1, "a live row is bright")
+pr.switch.scripts.OnClick(pr.switch)
+check(phr.alpha == 0.45, "power bar off: its settings dim")
+pr.switch.scripts.OnClick(pr.switch)
+check(phr.alpha == 1, "and wake up")
+check(rowOf("portraitSide").alpha == 0.45, "portrait side dims while the portrait is off")
+-- layout
+local pg = E2.pages.player
+local cols = {}
+for _, r in ipairs(pg.rows) do cols[r.parent] = true end
+local nCards, xs = 0, {}
+for card in pairs(cols) do nCards = nCards + 1; xs[card.points[1][4]] = true end
+local nCols = 0
+for _ in pairs(xs) do nCols = nCols + 1 end
+check(nCards >= 5 and nCols == 2, "rows grouped into cards, in two columns")
+for card in pairs(cols) do check(card.title.color[1] == 0.5, "card titles in the accent colour") end
+check(Panel.h == 28 + 26 + 8 + pg.height + 38, "window fits this page")
+E2:Select("target")
+local tallTarget = Panel.h
+E2:Select("player")
+check(tallTarget > Panel.h, "and resizes for a bigger one")
+check(tallTarget < 768, "even the biggest page fits a screen: " .. tallTarget)
+check(E2.tabs[1].line.shown and not E2.tabs[2].line.shown, "the current tab is underlined")
+E2.tabs[2].scripts.OnClick(E2.tabs[2])
+check(E2.tab == "target" and E2.tabs[2].line.shown and not E2.tabs[1].line.shown, "clicking a tab")
+check(E2.done.bg.ctex[1] == 0.5, "Done is the filled button")
+-- blocked in combat
+E2:Select("player")
+inCombat = true
+wr.slider.scripts.OnValueChanged(wr.slider, 400)
+check(U:Cfg("player").width == 230 and wr.slider.value == 230, "a slider snaps back in combat")
+inCombat = false
+SlashCmdList.KUI("edit")
+
+-- Bag settings use the same controls
+local bp = KUIBagSettings
+local bagRow = {}
+for _, r in ipairs(bp.rows) do bagRow[r.def.key] = r end
+check(bagRow.bagCols.slider and bagRow.categories.switch and #bagRow.outline.segments == 3 and bagRow.font.value, "bag settings: same controls")
+bagRow.bagCols.slider.scripts.OnValueChanged(bagRow.bagCols.slider, 12)
+check(KUIDB.bagCols == 12 and bagRow.bagCols.value.text == "12", "bag slider applies")
+local bagWin = ns.Bags.windows.bags.frame
+ns.Bags:Open()
+bagRow.bagCols.slider.scripts.OnValueChanged(bagRow.bagCols.slider, 11)
+check(bagWin.w == 11 * KUIDB.bagSize + 10 * KUIDB.gapX + 16, "and the bag window redraws: " .. tostring(bagWin.w))
+bagRow.bagCols.slider.scripts.OnValueChanged(bagRow.bagCols.slider, 10)
+local catBefore = KUIDB.categories
+bagRow.categories.switch.scripts.OnClick(bagRow.categories.switch)
+check(KUIDB.categories ~= catBefore, "bag switch applies")
+bagRow.categories.switch.scripts.OnClick(bagRow.categories.switch)
+SlashCmdList.KUI("alpha 0.85")
+check(bagRow.alpha.value.text == "0.85", "follows a change made elsewhere")
+
+print("== Minimap icon")
+local Ic = ns.MinimapIcon
+local Btn = KUIMinimapButton
+check(Btn and Btn.parent == Minimap and Btn.glyph.text == "k" and Btn.glyph.color[1] == 0.5, "the icon, on the map")
+check(KUIDB.icon and KUIDB.iconAngle == 315, "defaults")
+-- position: inside the corners of the square map
+KUIDB.map = true
+Minimap:SetSize(140, 140)
+Ic:Place()
+local pt = Btn.points[1]
+check(pt[2] == Minimap and pt[1] == "CENTER" and math.abs(pt[4] - 55) < 1e-9 and math.abs(pt[5] + 55) < 1e-9, "bottom right corner, inside the map")
+KUIDB.iconAngle = 0
+Ic:Place()
+check(math.abs(Btn.points[1][4] - 55) < 1e-9 and math.abs(Btn.points[1][5]) < 1e-9, "follows the edge")
+KUIDB.map = false
+KUIDB.iconAngle = 180
+Ic:Place()
+check(math.abs(Btn.points[1][4] + 70) < 1e-9, "on the edge of a round map")
+KUIDB.map = true
+-- dragging
+function Minimap:GetCenter() return 500, 300 end
+function GetCursorPosition() return 500, 500 end
+Btn.scripts.OnDragStart(Btn)
+Btn.scripts.OnUpdate(Btn, 0.01)
+check(math.abs(KUIDB.iconAngle - 90) < 1e-6, "dragging moves it around")
+Btn.scripts.OnDragStop(Btn)
+check(Btn.scripts.OnUpdate == nil, "and stops")
+KUIDB.iconAngle = 315
+Ic:Place()
+-- tooltip
+Btn.scripts.OnEnter(Btn)
+Btn.scripts.OnLeave(Btn)
+
+-- the menu
+check(KUIMenu == nil or not KUIMenu.shown, "menu shut to start")
+Btn.scripts.OnClick(Btn, "LeftButton")
+local Menu = KUIMenu
+check(Menu and Menu.shown, "clicking the icon opens the menu")
+check(UISpecialFrames[#UISpecialFrames] == "KUIMenu", "Esc closes it")
+local function menuRow(text)
+  for _, r in ipairs(Ic.rows) do
+    if r.shown ~= false and r.item and r.item.text == text then return r end
+  end
+end
+local names = {}
+for _, r in ipairs(Ic.rows) do if r.shown ~= false and r.item then names[#names + 1] = r.item.text end end
+check(names[1] == "Customise" and names[2] == "Edit mode", "Edit mode comes first: " .. table.concat(names, ", "))
+for _, want in ipairs({ "Bag settings", "Rares and treasures", "Sample cast", "Sample loot window", "Sample rare alert", "Unit frames", "Castbar", "Bags", "Rare scanner", "Hide this icon" }) do
+  check(menuRow(want), "menu has " .. want)
+end
+check(not menuRow("Minimap icon"), "its own switch isn't in the list")
+check(not menuRow("Reload to apply"), "no reload offered when nothing changed")
+check(menuRow("Customise").item.kind == "section" and menuRow("Customise").text.color[1] == 0.5, "section titles in the accent colour")
+Btn.scripts.OnClick(Btn, "RightButton")
+check(not Menu.shown, "clicking again closes it")
+
+-- edit mode from the menu
+Btn.scripts.OnClick(Btn)
+local em = menuRow("Edit mode")
+em.scripts.OnClick(em)
+check(U.unlocked and KUIEditMode.shown and not Menu.shown, "the menu opens the edit mode and gets out of the way")
+Btn.scripts.OnClick(Btn)
+check(menuRow("Edit mode").note.text == "open", "shows it's open")
+em = menuRow("Edit mode")
+em.scripts.OnClick(em)
+check(not U.unlocked and not KUIEditMode.shown, "and closes it")
+inCombat = true
+Btn.scripts.OnClick(Btn)
+em = menuRow("Edit mode")
+check(em.note.text == "not in combat", "in combat it says why not")
+em.scripts.OnClick(em)
+check(not U.unlocked and Menu.shown, "and does nothing")
+inCombat = false
+Btn.scripts.OnClick(Btn)
+
+-- the other actions
+Btn.scripts.OnClick(Btn)
+local c = menuRow("Sample cast")
+c.scripts.OnClick(c)
+check(Bar.label.text == "Sample cast" and Bar.shown and not Menu.shown, "sample cast")
+Bar.scripts.OnUpdate(Bar, 0)
+now = now + 5
+Bar.scripts.OnUpdate(Bar, 0.1)
+Bar.scripts.OnUpdate(Bar, 2)
+TBar.scripts.OnUpdate(TBar, 0.1)
+TBar.scripts.OnUpdate(TBar, 2)
+Btn.scripts.OnClick(Btn)
+c = menuRow("Sample loot window")
+c.scripts.OnClick(c)
+check(KUILoot.shown and KUILoot.title.text == "Sample loot", "sample loot window")
+KUILoot:Hide()
+Btn.scripts.OnClick(Btn)
+c = menuRow("Bag settings")
+KUIBagSettings:Hide()
+c.scripts.OnClick(c)
+check(KUIBagSettings.shown, "bag settings")
+KUIBagSettings:Hide()
+local listCalls = 0
+local realToggle = ns.Rares.ToggleList
+ns.Rares.ToggleList = function() listCalls = listCalls + 1 end
+Btn.scripts.OnClick(Btn)
+c = menuRow("Rares and treasures")
+c.scripts.OnClick(c)
+check(listCalls == 1, "rare list")
+ns.Rares.ToggleList = realToggle
+local testCalls = 0
+local realTest = ns.Rares.Test
+ns.Rares.Test = function() testCalls = testCalls + 1 end
+Btn.scripts.OnClick(Btn)
+c = menuRow("Sample rare alert")
+c.scripts.OnClick(c)
+check(testCalls == 1, "sample rare alert")
+ns.Rares.Test = realTest
+
+-- switches stay open and offer a reload
+local reloads = 0
+ReloadUI = function() reloads = reloads + 1 end
+Btn.scripts.OnClick(Btn)
+c = menuRow("Bags")
+check(c.track.shown and c.track.ctex[1] == 0.5, "parts have switches, lit when on")
+c.scripts.OnClick(c)
+check(KUIDB.bags == false and Menu.shown, "switching one leaves the menu open")
+check(menuRow("Bags").track.ctex[1] == 1, "switch shows off")
+local re = menuRow("Reload to apply")
+check(re and re.bg.ctex[1] == 0.5, "and offers a reload")
+c = menuRow("Bags")
+c.scripts.OnClick(c)
+check(KUIDB.bags and not menuRow("Reload to apply"), "switching it back removes the offer")
+c = menuRow("Bags")
+c.scripts.OnClick(c)
+re = menuRow("Reload to apply")
+re.scripts.OnClick(re)
+check(reloads == 1, "reloads")
+KUIDB.bags = true
+
+-- closing by clicking elsewhere
+Btn.scripts.OnClick(Btn)
+check(Menu.events.GLOBAL_MOUSE_DOWN, "listens for clicks only while open")
+local overMenu, overIcon = true, false
+MouseIsOver = function(f) if f == Menu then return overMenu end; return overIcon end
+Menu.scripts.OnEvent(Menu, "GLOBAL_MOUSE_DOWN")
+check(Menu.shown, "a click on the menu keeps it open")
+overMenu, overIcon = false, true
+Menu.scripts.OnEvent(Menu, "GLOBAL_MOUSE_DOWN")
+check(Menu.shown, "a click on the icon is left to the icon")
+overIcon = false
+Menu.scripts.OnEvent(Menu, "GLOBAL_MOUSE_DOWN")
+check(not Menu.shown and not Menu.events.GLOBAL_MOUSE_DOWN, "a click anywhere else closes it")
+
+-- hiding
+Btn.scripts.OnClick(Btn)
+c = menuRow("Hide this icon")
+c.scripts.OnClick(c)
+check(KUIDB.icon == false and not Btn.shown and chat[#chat]:find("/kui icon on"), "hide this icon, and how to get it back")
+SlashCmdList.KUI("icon on")
+check(KUIDB.icon and chat[#chat]:find("reload"), "/kui icon on")
+Btn:Show()
+-- parts that are off leave the menu
+local keepBags = ns.Bags.enabled
+ns.Bags.enabled = nil
+Btn.scripts.OnClick(Btn)
+check(not menuRow("Bag settings"), "bag settings not offered when bags are off")
+Btn.scripts.OnClick(Btn)
+ns.Bags.enabled = keepBags
+ns.Bags.enabled = true
+
+end)()
+
+;(function()
+print("== Rare alert in combat")
+local R, A, Tgt = ns.Rares, KUIRareAlert, KUIRareTarget
+local spot = A.targetSpot
+-- Everything the game refuses to do to a protected button in combat, counted.
+local touched = {}
+for _, m in ipairs({ "SetPoint", "ClearAllPoints", "SetAllPoints", "SetSize", "Show", "Hide", "SetAttribute", "SetAlpha", "SetParent", "EnableMouse" }) do
+  local orig = Tgt[m]
+  rawset(Tgt, m, function(...)
+    if inCombat then touched[#touched + 1] = m end
+    return orig(...)
+  end)
+end
+local drivers = {}
+RegisterStateDriver = function(f, _, v) drivers[f] = v end
+UnregisterStateDriver = function(f) drivers[f] = nil end
+inCombat = false
+R:Dismiss()
+now = now + 1000
+R:Spotted({ id = 70001, name = "Test Rare", source = "nameplate" })
+check(A.shown and Tgt.shown and Tgt.attrs.macrotext:find("/target Test Rare"), "alert and target button up")
+-- The bug: a protected frame makes whatever it's anchored to protected too.
+check(Tgt.parent == UIParent, "the target button isn't a child of the alert")
+check(#Tgt.points == 1, "one anchor")
+for _, p in ipairs(Tgt.points) do
+  check(p[2] == UIParent, "anchored to the screen, never to the alert or anything on it")
+end
+check(Tgt.points[1][4] == 300 and Tgt.points[1][5] == 200, "sits over its spot")
+check(Tgt.w == spot.w and Tgt.h == spot.h, "same size as its spot")
+check(drivers[Tgt] == "[combat] hide; show", "hides itself in combat, securely")
+
+-- Combat starts with the alert up, the way you'd pull a rare.
+fire("PLAYER_REGEN_DISABLED")
+check(spot.text.text == "After combat", "the spot says so")
+inCombat = true
+local wp
+TomTom = { AddWaypoint = function(_, m, x, y, o) wp = o.title; return 1 end, RemoveWaypoint = function() end }
+R.current.m, R.current.x, R.current.y = 1411, 0.5, 0.5
+A.way.scripts.OnClick(A.way)
+check(wp == "Test Rare", "Waypoint works in combat")
+A.close.scripts.OnClick(A.close)
+check(not A.shown, "x closes it in combat")
+check(#touched == 0, "without touching the protected button: " .. table.concat(touched, ","))
+
+-- A new rare while already in combat, then Ignore.
+now = now + 1000
+R:Spotted({ id = 70002, name = "Second Rare", source = "nameplate" })
+check(A.shown and spot.text.text == "After combat", "a new alert in combat")
+R.current.until_ = now - 1
+A.scripts.OnUpdate(A, 1)
+check(not A.shown, "and the alert's own timeout can close it in combat")
+now = now + 1000
+R:Spotted({ id = 70003, name = "Third Rare", source = "nameplate" })
+A.ignore.scripts.OnClick(A.ignore)
+check(not A.shown and KUIDB.rareIgnored[70003], "Ignore works in combat")
+now = now + 1000
+R:Spotted({ id = 70004, name = "Fourth Rare", source = "nameplate" })
+A.scripts.OnDragStart(A)
+A.scripts.OnDragStop(A)
+check(#touched == 0, "dragging the alert in combat touches nothing either: " .. table.concat(touched, ","))
+
+-- Combat ends with an alert still up.
+inCombat = false
+fire("PLAYER_REGEN_ENABLED")
+check(Tgt.shown and Tgt.attrs.macrotext:find("Fourth Rare") and spot.text.text == "Target", "target button back for the current rare")
+rawset(spot, "GetLeft", function() return 500 end)
+A.scripts.OnDragStop(A)
+check(Tgt.points[1][4] == 500 and #Tgt.points == 1, "and it follows when the alert is dragged")
+rawset(spot, "GetLeft", nil)
+R:Dismiss()
+check(not Tgt.shown and drivers[Tgt] == nil, "closing the alert removes the button and its driver")
+
+-- Combat ends with no alert: nothing comes back.
+now = now + 1000
+R:Spotted({ id = 70005, name = "Fifth Rare", source = "nameplate" })
+fire("PLAYER_REGEN_DISABLED")
+inCombat = true
+A.close.scripts.OnClick(A.close)
+inCombat = false
+fire("PLAYER_REGEN_ENABLED")
+check(not Tgt.shown and drivers[Tgt] == nil, "the button stays gone if the alert was closed in combat")
+
+-- Without the state driver API it still hides, at the last safe moment.
+local rd = RegisterStateDriver
+RegisterStateDriver = nil
+now = now + 1000
+R:Spotted({ id = 70006, name = "Sixth Rare", source = "nameplate" })
+check(Tgt.shown, "button up")
+fire("PLAYER_REGEN_DISABLED")
+check(not Tgt.shown, "hidden as combat starts")
+fire("PLAYER_REGEN_ENABLED")
+R:Dismiss()
+RegisterStateDriver = rd
+
+-- Treasure alerts have no target button.
+now = now + 1000
+R:Show({ treasure = true, name = "Chest", key = "chest1" })
+check(not Tgt.shown and drivers[Tgt] == nil, "no target button for treasure")
+fire("PLAYER_REGEN_DISABLED")
+inCombat = true
+A.close.scripts.OnClick(A.close)
+check(not A.shown, "treasure alert closes in combat")
+inCombat = false
+
+-- Skull only out of combat.
+local marked = 0
+SetRaidTarget = function() marked = marked + 1 end
+UNITS.target.classif = "rare"
+UNITS.target.dead, UNITS.target.raid = nil, nil
+inCombat = true
+R:CheckUnit("target", "target")
+check(marked == 0, "no skull attempt in combat")
+inCombat = false
+R:CheckUnit("target", "target")
+check(marked == 1, "skull out of combat")
+UNITS.target.classif = "elite"
+R:Dismiss()
+
+print("== Blocked actions")
+KUIDB.blockedLog = nil
+local before = #chat
+fire("ADDON_ACTION_BLOCKED", "SomeOtherAddon", "Frame:Hide()")
+check(#chat == before and not KUIDB.blockedLog, "other add-ons are their own business")
+fire("ADDON_ACTION_BLOCKED", "KUI", "Frame:Hide()")
+check(#chat == before + 1 and chat[#chat]:find("Frame:Hide()", 1, true), "kUI says what was blocked")
+fire("ADDON_ACTION_BLOCKED", "KUI", "Frame:Hide()")
+check(#chat == before + 1 and KUIDB.blockedLog["Frame:Hide()"] == 2, "once in chat, but counted")
+inCombat = true
+fire("ADDON_ACTION_FORBIDDEN", "KUI", "SetRaidTarget()")
+check(chat[#chat]:find("SetRaidTarget", 1, true) and chat[#chat]:find("in combat"), "forbidden too, and whether it was in combat")
+inCombat = false
+KUIDB.blockedLog = nil
+end)()
+
+-- A /reload in combat waits, because secure frames can't be made then.
+U.started = nil
+inCombat = true
+U:Enable()
+check(not U.started, "in combat: waits")
+inCombat = false
+fire("PLAYER_REGEN_ENABLED")
+check(U.started, "starts when combat ends")
 
 for _, m in ipairs(chat) do print("  chat: " .. m) end
 print(string.format("\n%d passed, %d failed", passed, failed))

@@ -188,6 +188,7 @@ function R:BuildToast()
   f:SetScript("OnDragStop", function()
     f:StopMovingOrSizing()
     db.rareLeft, db.rareTop = floor(f:GetLeft() + 0.5), floor(f:GetTop() + 0.5)
+    R:SyncTarget() -- the target button follows
   end)
   f:Hide()
   S.Panel(f)
@@ -227,7 +228,7 @@ function R:BuildToast()
   f.ignore = S.Button(f, "Ignore", 56, function() R:Ignore(R.current) end, "Don't alert for this rare again (/kui rares to undo)")
   f.ignore:SetPoint("BOTTOMRIGHT", -8, 8)
   f.way:SetPoint("RIGHT", f.ignore, "LEFT", -4, 0)
-  -- Spot for the target button (a separate secure button sits on top of it).
+  -- Where the target button goes. The real one is a separate secure button placed over it.
   f.targetSpot = S.Button(f, "Target", 60, nil, nil)
   f.targetSpot:SetPoint("RIGHT", f.way, "LEFT", -4, 0)
   f.targetSpot:EnableMouse(false)
@@ -271,27 +272,45 @@ function R:PlaceToast()
 end
 
 -- Keep the secure target button over its spot; only possible out of combat.
+--
+-- It's placed by screen position, never anchored to the alert. A protected frame
+-- makes whatever it's anchored to protected as well, and then the game refuses to
+-- hide the alert in combat. In combat the button hides itself (see the state driver),
+-- so nothing invisible is left clickable, and it comes back when combat ends.
 function R:SyncTarget()
   local t, f = self.targetBtn, self.toast
   if not t then return end
   local want = f:IsShown() and self.current and not self.current.treasure and self.current.name
   if InCombatLockdown() then
     self.syncPending = true
-    t:SetAlpha(want and 1 or 0)
-    f.targetSpot.text:SetText(want and (t.forName == self.current.name and "Target" or "After combat") or "Target")
+    f.targetSpot.text:SetText(want and "After combat" or "Target")
     return
   end
   self.syncPending = false
-  if want then
+  local spot = f.targetSpot
+  local left, bottom = spot:GetLeft(), spot:GetBottom()
+  if want and left then
     t:SetAttribute("macrotext", "/cleartarget\n/target " .. self.current.name)
-    t.forName = self.current.name
     t:ClearAllPoints()
-    t:SetAllPoints(f.targetSpot)
-    t:SetAlpha(1)
+    t:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", left, bottom)
+    t:SetSize(spot:GetWidth(), spot:GetHeight())
     t:Show()
-    f.targetSpot.text:SetText("Target")
+    if RegisterStateDriver then RegisterStateDriver(t, "visibility", "[combat] hide; show") end
+    spot.text:SetText("Target")
   else
+    if UnregisterStateDriver then UnregisterStateDriver(t, "visibility") end
     t:Hide()
+  end
+end
+
+-- Combat is starting: the last moment the button can be touched from here.
+function R:CombatStarts()
+  local t, f = self.targetBtn, self.toast
+  if not t then return end
+  self.syncPending = true
+  if not RegisterStateDriver then t:Hide() end
+  if f:IsShown() and self.current and not self.current.treasure then
+    f.targetSpot.text:SetText("After combat")
   end
 end
 
@@ -453,7 +472,8 @@ function R:CheckUnit(unit, source)
   self:Spotted({ id = id, name = UnitName(unit), level = level, elite = class == "rareelite" or nil,
                  unit = unit, source = source, dead = dead })
   -- Skull it once you target it.
-  if unit == "target" and ns.db.rareMark and not dead and GetRaidTargetIndex and not GetRaidTargetIndex("target")
+  if unit == "target" and ns.db.rareMark and not dead and not InCombatLockdown() and GetRaidTargetIndex
+     and not S.IsSecret(GetRaidTargetIndex("target")) and not GetRaidTargetIndex("target")
      and (not IsInGroup() or UnitIsGroupLeader("player") or UnitIsGroupAssistant("player")) then
     pcall(SetRaidTarget, "target", 8)
   end
@@ -757,7 +777,7 @@ function R:Enable()
   local ev = CreateFrame("Frame")
   for _, e in ipairs({ "NAME_PLATE_UNIT_ADDED", "PLAYER_TARGET_CHANGED", "UPDATE_MOUSEOVER_UNIT",
                        "VIGNETTE_MINIMAP_UPDATED", "VIGNETTES_UPDATED", "PLAYER_REGEN_ENABLED",
-                       "ZONE_CHANGED_NEW_AREA", "UNIT_HEALTH" }) do
+                       "PLAYER_REGEN_DISABLED", "ZONE_CHANGED_NEW_AREA", "UNIT_HEALTH" }) do
     pcall(ev.RegisterEvent, ev, e)
   end
   ev:SetScript("OnEvent", function(_, event, unit)
@@ -771,6 +791,8 @@ function R:Enable()
       if unit == "target" and R.current and UnitIsDead("target") then R:CheckUnit("target", "target") end
     elseif event == "VIGNETTE_MINIMAP_UPDATED" or event == "VIGNETTES_UPDATED" then
       R:CheckVignettes()
+    elseif event == "PLAYER_REGEN_DISABLED" then
+      R:CombatStarts()
     elseif event == "PLAYER_REGEN_ENABLED" then
       if R.syncPending then R:SyncTarget() end
     elseif event == "ZONE_CHANGED_NEW_AREA" then

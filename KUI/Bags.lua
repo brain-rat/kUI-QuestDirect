@@ -655,108 +655,66 @@ end
 -- Settings panel
 ------------------------------------------------------------------------
 
-local function Cycle(list, current, dir)
-  local idx = 1
-  for i, v in ipairs(list) do if v.key == current then idx = i end end
-  idx = (idx - 1 + dir) % #list + 1
-  return list[idx]
-end
-
 local SETTINGS = {
-  { kind = "step", label = "Columns", key = "bagCols", min = 4, max = 30, step = 1 },
-  { kind = "step", label = "Slot size", key = "bagSize", min = 24, max = 64, step = 2 },
-  { kind = "step", label = "Horizontal gap", key = "gapX", min = 0, max = 20, step = 1 },
-  { kind = "step", label = "Vertical gap", key = "gapY", min = 0, max = 20, step = 1 },
-  { kind = "step", label = "Gap between categories", key = "sectionGap", min = 0, max = 40, step = 2 },
-  { kind = "cycle", label = "Font", key = "font", list = function() return S.FONTS end },
-  { kind = "step", label = "Count size", key = "countSize", min = 8, max = 24, step = 1 },
-  { kind = "step", label = "Heading size", key = "headerSize", min = 8, max = 24, step = 1 },
-  { kind = "cycle", label = "Text outline", key = "outline", list = function() return S.OUTLINES end },
-  { kind = "step", label = "Glow strength", key = "glow", min = 0, max = 1, step = 0.1, fmt = "%.1f" },
-  { kind = "step", label = "Opacity", key = "alpha", min = 0, max = 1, step = 0.05, fmt = "%.2f" },
-  { kind = "step", label = "Scale", key = "bagScale", min = 0.5, max = 2, step = 0.05, fmt = "%.2f" },
-  { kind = "toggle", label = "Categories", key = "categories" },
-  { kind = "toggle", label = "Item level on gear", key = "ilvl" },
-  { kind = "toggle", label = "Glow on common items", key = "common" },
+  { group = "Layout", kind = "step", label = "Columns", key = "bagCols", min = 4, max = 30, step = 1 },
+  { group = "Layout", kind = "step", label = "Slot size", key = "bagSize", min = 24, max = 64, step = 2 },
+  { group = "Layout", kind = "step", label = "Horizontal gap", key = "gapX", min = 0, max = 20, step = 1 },
+  { group = "Layout", kind = "step", label = "Vertical gap", key = "gapY", min = 0, max = 20, step = 1 },
+  { group = "Layout", kind = "step", label = "Category gap", key = "sectionGap", min = 0, max = 40, step = 2 },
+  { group = "Layout", kind = "step", label = "Scale", key = "bagScale", min = 0.5, max = 2, step = 0.05, fmt = "%.2f" },
+  { group = "Text", kind = "cycle", stepper = true, label = "Font", key = "font", list = function() return S.FONTS end },
+  { group = "Text", kind = "step", label = "Count size", key = "countSize", min = 8, max = 24, step = 1 },
+  { group = "Text", kind = "step", label = "Heading size", key = "headerSize", min = 8, max = 24, step = 1 },
+  { group = "Text", kind = "cycle", label = "Text outline", key = "outline", list = S.OUTLINES },
+  { group = "Look", kind = "step", label = "Glow strength", key = "glow", min = 0, max = 1, step = 0.1, fmt = "%.1f" },
+  { group = "Look", kind = "step", label = "Opacity", key = "alpha", min = 0, max = 1, step = 0.05, fmt = "%.2f" },
+  { group = "Look", kind = "toggle", label = "Categories", key = "categories" },
+  { group = "Look", kind = "toggle", label = "Item level on gear", key = "ilvl" },
+  { group = "Look", kind = "toggle", label = "Glow on common items", key = "common" },
 }
 B.SETTINGS = SETTINGS
-local ROW = 22
+local SETTINGS_W, SETTINGS_HEAD = 288, 28
 
 function B:BuildSettings()
   local p = CreateFrame("Frame", "KUIBagSettings", UIParent)
   p:SetFrameStrata("HIGH")
   p:SetClampedToScreen(true)
   p:EnableMouse(true)
-  p:SetWidth(250)
-  p:SetHeight(HEADER_H + #SETTINGS * ROW + PAD * 2)
+  p:SetWidth(SETTINGS_W)
   p:Hide()
-  S.Panel(p)
-  S.Header(p, HEADER_H)
-  local t = S.Text(p, nil, "LEFT", nil, 14)
-  t:SetPoint("TOPLEFT", 8, -6)
-  t:SetText("Bag settings")
-  t:SetTextColor(S.ACCENT[1], S.ACCENT[2], S.ACCENT[3])
-  local x = S.Button(p, "x", 20, function() p:Hide() end)
-  x:SetPoint("TOPRIGHT", -2, -3)
-  p.rows = {}
-  for i, def in ipairs(SETTINGS) do
-    local r = CreateFrame("Frame", nil, p)
-    r:SetPoint("TOPLEFT", 1, -(HEADER_H + PAD + (i - 1) * ROW))
-    r:SetPoint("TOPRIGHT", -1, -(HEADER_H + PAD + (i - 1) * ROW))
-    r:SetHeight(ROW)
-    r.label = S.Text(r, nil, "LEFT", nil, 12)
-    r.label:SetPoint("LEFT", 9, 0)
-    r.label:SetText(def.label)
-    r.label:SetTextColor(0.85, 0.85, 0.85)
-    r.value = S.Text(r, nil, "CENTER", nil, 12)
-    local function change(dir)
-      local db = ns.db
-      if def.kind == "step" then
-        local v = db[def.key] + dir * def.step
-        v = max(def.min, min(def.max, floor(v / def.step + 0.5) * def.step))
-        db[def.key] = v
-      elseif def.kind == "cycle" then
-        db[def.key] = Cycle(def.list(), db[def.key], dir).key
-      else
-        db[def.key] = not db[def.key]
-      end
+  S.Panel(p, max(ns.db.alpha, 0.94))
+  S.TitleBar(p, "Bag settings", SETTINGS_HEAD)
+  local x = S.Button(p, "x", 22, function() p:Hide() end)
+  x:SetPoint("TOPRIGHT", -3, -4)
+  local io = {
+    get = function(def) return ns.db[def.key] end,
+    set = function(def, v) ns.db[def.key] = v end,
+    changed = function(def)
       if def.key == "font" then S.ApplyFonts() end
       FUI:Refresh()
+    end,
+  }
+  p.rows = {}
+  local y = SETTINGS_HEAD + 8
+  local cards = {}
+  for i, def in ipairs(SETTINGS) do
+    local card = cards[def.group]
+    if not card then
+      if i > 1 then y = y + cards.last:GetHeight() + 6 end
+      card = S.Card(p, def.group, SETTINGS_W - 16)
+      card:SetPoint("TOPLEFT", p, "TOPLEFT", 8, -y)
+      cards[def.group], cards.last = card, card
     end
-    if def.kind == "toggle" then
-      r.value:SetPoint("RIGHT", -10, 0)
-      r.value:SetWidth(90)
-      local hit = S.Button(r, "", 90, function() change(1) end)
-      hit:SetPoint("RIGHT", -10, 0)
-    else
-      local plus = S.Button(r, def.kind == "cycle" and ">" or "+", 20, function() change(1) end)
-      plus:SetPoint("RIGHT", -8, 0)
-      r.value:SetPoint("RIGHT", plus, "LEFT", -2, 0)
-      r.value:SetWidth(def.kind == "cycle" and 104 or 44)
-      local minus = S.Button(r, def.kind == "cycle" and "<" or "-", 20, function() change(-1) end)
-      minus:SetPoint("RIGHT", r.value, "LEFT", -2, 0)
-    end
-    r.def = def
-    p.rows[i] = r
+    p.rows[i] = card:Add(def, io)
   end
+  p:SetHeight(y + cards.last:GetHeight() + 8)
   self.settings = p
   self:FillSettings()
 end
 
 function B:FillSettings()
-  local db = ns.db
-  for _, r in ipairs(self.settings.rows) do
-    local def, v = r.def, db[r.def.key]
-    if def.kind == "step" then
-      r.value:SetText(def.fmt and def.fmt:format(v) or tostring(v))
-    elseif def.kind == "cycle" then
-      local name = tostring(v)
-      for _, it in ipairs(def.list()) do if it.key == v then name = it.name end end
-      r.value:SetText(name)
-    else
-      r.value:SetText(v and "|cff7fc8ffOn|r" or "|cff808080Off|r")
-    end
-  end
+  S.Panel(self.settings, max(ns.db.alpha, 0.94))
+  for _, r in ipairs(self.settings.rows) do r:Refresh() end
 end
 
 function B:ToggleSettings()

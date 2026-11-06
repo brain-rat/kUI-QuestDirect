@@ -7,7 +7,7 @@ Add-ons for **World of Warcraft: Forever** (client 1.60, Interface 16001): a que
 | Folder | What it is |
 |---|---|
 | [`QuestDirect`](QuestDirect/README.md) | Quest tracker you can drag and scale. Click a quest and the TomTom arrow points at its next stop. Suggests quests to pick up nearby, plans the zone (which quest givers to visit, what to hand in and pick up, which objectives to do, where to go next), and has buttons for usable quest items. |
-| [`kUI`](KUI/README.md) | One flat, dark style for the game's windows: bags and bank with categories and a rarity glow on items, loot window, tooltips, square minimap, a rare and treasure scanner, and junk selling at vendors. |
+| [`kUI`](KUI/README.md) | One flat, dark style for the game's windows: player and target frames with cast bars, bags and bank with categories and a rarity glow on items, loot window, tooltips, square minimap, a rare and treasure scanner, and junk selling at vendors. |
 | [`ForeverSync`](ForeverSync/README.md) | A small Windows program that downloads WoW Forever data from the ForeverDB API onto your PC, so it can be turned into data files for the add-ons. |
 | [`tools`](tools) | Scripts that build the add-ons' Classic quest, rare and treasure data from the CMaNGOS Classic database. |
 

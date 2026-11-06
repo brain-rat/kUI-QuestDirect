@@ -2,7 +2,87 @@
 
 A flat, dark look for the game's own windows, matching QuestDirect. It's built as the base for a bigger UI overhaul: every part uses the same shared style (`Style.lua`), so more windows can be added and they'll all match.
 
-So far it covers your bags and bank, the loot window, tooltips, a rare and treasure scanner, junk selling and the minimap.
+So far it covers the player and target frames, the castbar, your bags and bank, the loot window, tooltips, a rare and treasure scanner, junk selling and the minimap.
+
+## Player and target frames
+
+Flat frames in the shared style replace Blizzard's player, target, target-of-target and pet frames.
+
+- **Header strip:** name, level and status. Your name is in the accent colour. A target's name and health bar use its reaction colour: red hostile, yellow neutral, green friendly, grey if someone else has tagged it.
+- **Status tags:** Combat, Rested, Lead and PvP on you. Elite, Rare, Rare Elite, Boss and PvP on your target. A raid marker shows next to the name.
+- **Health bar:** percent on the left, `current / max` on the right, or Dead, Ghost or Offline. Players use their class colour (`/kui frames class` for plain green).
+- **Power bar:** in that power's colour, with `current / max`.
+- **Clicks:** left-click targets, right-click opens the game's unit menu. Click-cast add-ons can see the frames.
+- **Target's buffs and debuffs** sit above its frame, debuffs first, up to 16. Debuff borders show the dispel type, and your own are in the accent colour.
+- **Combo points** are five pips under the player frame. Rogues always have them, and Druids see them while they have points.
+- **Totems:** Blizzard's totem frame is kept and sits above the player frame. It keeps Blizzard's look for now.
+- **Elites, rares and bosses** get a coloured border and soft glow on the target frame: gold for elites, silver-blue for rares, red for bosses.
+- Portraits are off by default. Turn them on in the edit mode.
+
+## Castbar
+
+- **Your bar:** spell icon, name, time left and a thin spark.
+- **Target's bar:** sits above the target frame, and the target's buffs and debuffs move up to make room while it shows.
+- **Colours:** sky blue for casts, green for channels, grey for spells you can't interrupt. A failed or interrupted cast flashes red with the reason.
+- `/kui castbar test` runs a sample cast, so you can check the look without casting.
+
+## Edit mode
+
+Click the **minimap icon** and choose **Edit mode**, or type **`/kui edit`**. Every frame gets a blue overlay, and a settings window opens with a tab for each frame: Player, Target, Target of target, Pet and Castbar. Settings are grouped into cards, with sliders (the mouse wheel works on them too), switches and side-by-side choices. A setting that has no effect right now, like Height with the power bar off, dims.
+
+- **Drag** a frame to move it.
+- **Click** a frame to jump to its settings.
+- Changes show straight away and are saved as you make them. There's nothing to apply.
+- **Reset this frame** puts the chosen frame back to its default settings and spot.
+- **Done**, **x**, **Esc** or typing `/kui edit` again closes it. Entering combat also closes it, and it can't open in combat, because the game doesn't let frames like these change size in combat.
+- While it's open, the target, target-of-target and pet frames stay up showing you, so you can set them up with nothing targeted.
+
+Each frame has its own settings:
+
+| Setting | Options |
+|---|---|
+| Width, health bar height, power bar height | Sizes in pixels |
+| Power bar | On or off |
+| Name | Full, first name only, or hidden |
+| Name font size | The level and tags scale with it, and the header grows to fit |
+| Level | On or off |
+| Status tags and raid marker | On or off |
+| Health numbers, health percent, power numbers | On or off, each on its own |
+| Health font size, power font size | Sizes |
+| Class colours | On, or plain green for players |
+| Portrait | Off, flat or 3D |
+| Portrait side | Left or right |
+| Scale | 0.5 to 2 |
+
+If the name, level and tags are all off, the header strip goes too.
+
+The **Target** tab also has:
+
+| Setting | Options |
+|---|---|
+| Elite and rare style | Off, border, or border and glow. Also on the ToT tab. |
+| Preview as | See the frame as Normal, Elite, Rare, Rare Elite or Boss without finding one |
+| Buffs and debuffs | On or off |
+| Buff and debuff size | Icons wrap to fit the frame's width |
+| Cast bar, cast bar height | The bar on the target frame |
+
+The **Castbar** tab has width, height, font size, spell icon, time left, spark and scale for your bar. The icon, time and spark settings apply to the target's bar too.
+
+Every tab also has the **font** and **panel opacity**, which apply to all of kUI.
+
+## Minimap icon
+
+A small **k** on the edge of the minimap, bottom right to start with. Drag it to move it around the edge.
+
+Click it for the kUI menu:
+
+- **Customise:** Edit mode and Bag settings.
+- **Windows:** the rares and treasures list.
+- **Try it out:** a sample cast, loot window or rare alert, to see the look without waiting for the real thing.
+- **Parts of kUI:** a switch for each part. The menu stays open so you can flip several, then **Reload to apply** appears.
+- **Hide this icon:** `/kui icon on` and `/reload` bring it back.
+
+Click the icon again, press Esc or click anywhere else to close the menu.
 
 ## Bags
 
@@ -72,11 +152,11 @@ The alert shows:
 
 - the rare's **3D model** and **name**: silver-blue for rares, gold for rare elites;
 - its **level** and **where it is**: zone, coordinates and distance;
-- **Target**: targets it once it's in range. During combat this waits until combat ends, because the game only lets add-ons set that up out of combat.
+- **Target**: targets it once it's in range. In combat the button says "After combat" and comes back when combat ends, because the game only lets add-ons set that up out of combat. **x**, Waypoint and Ignore work in combat.
 - **Waypoint**: puts a waypoint on it, in TomTom if you have it, otherwise the game's own map pin.
 - **Ignore**: never alert for this rare again.
 
-When you target the rare it gets a **skull** (if you're solo, or the group leader or an assistant). When it dies the alert says so. The same rare won't alert again for 5 minutes. Drag the alert to move it.
+When you target the rare out of combat it gets a **skull** (if you're solo, or the group leader or an assistant). When it dies the alert says so. The same rare won't alert again for 5 minutes. Drag the alert to move it.
 
 ### Map and list
 
@@ -167,6 +247,19 @@ The loot window is replaced with a QuestDirect-style one:
 | Command | Does |
 |---|---|
 | `/kui` | Show settings |
+| `/kui edit` | Open or close the edit mode (`/kui unlock` and `/kui lock` also work) |
+| `/kui icon on` / `off` | Minimap icon on or off (needs `/reload`) |
+| `/kui frames` | Unit frame commands |
+| `/kui frames scale 1.1` | Size of all the unit frames at once (0.5 to 2) |
+| `/kui frames class` | Class colours on player health, on or off for all of them |
+| `/kui frames reset` | All the unit frames back to their default settings and spots |
+| `/kui frames on` / `off` | kUI unit frames or the game's (needs `/reload`) |
+| `/kui castbar` | Castbar commands |
+| `/kui castbar test` | Run a sample cast |
+| `/kui castbar scale 1.1` | Size of your cast bar (0.5 to 2) |
+| `/kui castbar target` | Cast bar on the target frame on or off |
+| `/kui castbar reset` | Your cast bar back to its default settings and spot |
+| `/kui castbar on` / `off` | kUI's cast bar or the game's for yourself (needs `/reload`) |
 | `/kui loot on` / `off` | Use the kUI loot window or the game's (needs `/reload`) |
 | `/kui map on` / `off` | Square minimap or the game's (needs `/reload`) |
 | `/kui bags on` / `off` | kUI bags or the game's (needs `/reload`) |
@@ -198,7 +291,13 @@ The loot window is replaced with a QuestDirect-style one:
 
 ## Good to know
 
-- **Tested outside the game only**, against a stubbed WoW API (152 checks).
+- **Tested mostly outside the game**, against a stubbed WoW API, plus play in game for the unit frames, settings windows and minimap icon.
+  - Settings controls: sliders, the mouse wheel, limits, switches, choices, steppers, dimmed rows, cards in two columns, the same controls in the bag settings.
+  - Minimap icon: placement on square and round maps, dragging, every menu item, part switches and the reload offer, closing by clicking elsewhere, hiding it.
+  - Unit frames: Blizzard's frames hidden and silent, totems moved out, secure click setup, health, power, level, tags, colours, two-part player names, raid marker, Dead, Ghost and Offline, target-of-target and pet, buffs and debuffs, combo pips, moving, scale, closing on combat, waiting for combat to end after a `/reload`.
+  - Edit mode: every setting through the panel's own buttons, one frame's change not touching another, limits, flat and 3D portraits, elite and rare preview, frame reset, older settings carrying over, nothing changing in combat, Done, Esc and combat closing it.
+  - Castbar: casts, channels, pushback, finishing, failed and interrupted, another spell's failure not ending a cast, can't-interrupt colour, a new target, the sample.
+  - Secret values: health, power, names, levels, auras and casts as secret values, with any maths or text work on them in Lua failing the test.
   - Rares: Classic spawn points placed and pinned, nameplate, mouseover and map-marker alerts, normal mobs ignored, level and position, model, sound, flash, no repeats, skull on target, kills, waypoint, the target button waiting for combat to end, ignore, the zone list.
   - Tooltips: panel, hidden Blizzard frame, old-style backdrops, health bar, font, rarity border and its reset, item level, vendor price (and not when the game shows one), drop lines best-first with chests by name, turning lines off.
   - Junk: greys sold, no-value and locked items left alone, nothing else sold, the summary, Shift to skip, a slot that changed isn't sold.
@@ -210,6 +309,8 @@ The loot window is replaced with a QuestDirect-style one:
   - Settings.
 - The minimap part works with both Classic and modern minimap layouts. If a Blizzard piece is still showing on the minimap, send me a screenshot.
 - If anything errors in game, the Lua error text is what I need.
+- If the game blocks kUI ("Interface action failed because of an AddOn"), kUI prints what was blocked in chat. That line is what I need.
+- The unit frames replace Blizzard's completely, so anything of Blizzard's that lived inside them only comes back if kUI rebuilds it. Not in yet: a Druid's mana bar while shapeshifted, and heal and absorb bars on health. `/kui frames off` and `/reload` gives you Blizzard's frames back.
 - If using an item from your bags in combat ever shows "Interface action failed because of an AddOn", tell me. Bag add-ons occasionally hit that and it has a known fix.
 - Not in yet: the bank's own row for equipping bank bags (`/kui bank off` and `/reload` gives you Blizzard's bank for that), the keyring, and custom categories.
 
@@ -218,8 +319,13 @@ The loot window is replaced with a QuestDirect-style one:
 | File | Contents |
 |---|---|
 | `KUI.toc` | Manifest |
-| `Style.lua` | The shared look: panels, borders, buttons, rarity glow, fonts |
+| `Style.lua` | The shared look: panels, borders, buttons, bars, drag overlays, rarity glow, fonts |
 | `Core.lua` | Settings and `/kui` |
+| `UnitFrames.lua` | Player, target, target-of-target and pet frames, target auras, combo pips |
+| `Castbar.lua` | Cast bars for you and your target |
+| `Controls.lua` | The settings controls: sliders, switches, choices, cards, buttons |
+| `EditMode.lua` | The edit mode's settings window |
+| `MinimapIcon.lua` | The minimap icon and its menu |
 | `Loot.lua` | Loot window |
 | `Minimap.lua` | Square minimap and info strip |
 | `Bags.lua` | Bag and bank windows, categories, settings panel |
